@@ -1,0 +1,4 @@
+payout_id,transaction_id,customer_id,recipient_name,amount,currency,status,scheduled_for,failure_reason
+PAY-7001,TXN-9001,CUS-1001,Bright Studio,2400,USD,processing,2026-08-18,
+PAY-7002,TXN-9003,CUS-1003,Kente Labs,5300,GBP,review required,2026-08-16,compliance review
+PAY-7003,TXN-9004,CUS-1004,Mwiza Design,800,USD,failed,2026-08-15,beneficiary details need review
