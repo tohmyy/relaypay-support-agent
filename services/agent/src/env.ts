@@ -8,6 +8,8 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
   MCP_SERVER_URL: z.string().url(),
   MCP_SERVER_AUTH_TOKEN: nonEmpty,
+  // Optional. A blank value counts as unset (default model is used).
+  AGENT_MODEL: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
 });
 
 export type Env = z.infer<typeof schema>;
