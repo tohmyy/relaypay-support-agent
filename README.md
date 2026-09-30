@@ -41,3 +41,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## Agent
 
 `npm run agent:chat` (text harness). See `docs/AGENT.md`.
+
+## Workflows
+
+`docs/WORKFLOWS.md` maps support workflows A-H to the official test scenarios.

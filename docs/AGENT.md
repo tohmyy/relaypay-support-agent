@@ -65,3 +65,7 @@ Chat rows are kept in `conversation_turns` (conversation ids start with `test-ch
 - `tests/agent/units.test.ts`, `tests/agent/turn.test.ts`: offline (fake model, fake database).
 - `tests/agent/decisions.live.test.ts`: real model against the seeded project through an in-process MCP server.
   Skipped when `ANTHROPIC_API_KEY` is empty. Cleans up its rows.
+
+## Workflows
+
+See `docs/WORKFLOWS.md` for workflows A-H, the scenarios they cover and the records they leave.

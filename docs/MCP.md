@@ -55,3 +55,9 @@ Enums: ticket category `payment|payout|invoice|account|compliance|technical|othe
 
 `tests/mcp/tools.test.ts` (fake store, validation and failure handling), `tests/mcp/http.test.ts` (auth, tool list,
 a real client call), `tests/mcp/live.test.ts` (against Supabase; skipped without credentials; deletes what it creates).
+
+## Conversation attribution
+
+Send `X-Conversation-Id: <conversation id>` (letters, digits, `_ . : -`, max 64) on the MCP connection and every tool
+call is written to `tool_calls` with that conversation id, even for tools whose input has no conversation field.
+An id inside the tool input wins over the header. Malformed values are ignored. The agent sets this header on every turn.
