@@ -6,15 +6,18 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "echo \"no lint yet\"",
-    "dev": "tsx --env-file-if-exists=../../.env.local src/index.ts"
+    "dev": "tsx --env-file-if-exists=../../.env.local src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env.local src/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
     "@supabase/supabase-js": "2.109.0",
+    "ws": "8.22.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
+    "@types/ws": "8.18.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   }
