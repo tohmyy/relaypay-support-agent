@@ -37,3 +37,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## MCP server
 
 `npm run mcp:dev`, `npm run mcp:smoke`. See `docs/MCP.md`.
+
+## Agent
+
+`npm run agent:chat` (text harness). See `docs/AGENT.md`.

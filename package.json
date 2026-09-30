@@ -23,7 +23,8 @@
     "kb:split": "tsx scripts/kb/split.ts",
     "kb:ingest": "tsx --env-file-if-exists=.env.local scripts/kb/ingest.ts",
     "mcp:dev": "npm run dev --workspace services/mcp",
-    "mcp:smoke": "tsx --env-file-if-exists=.env.local scripts/mcp/smoke.ts"
+    "mcp:smoke": "tsx --env-file-if-exists=.env.local scripts/mcp/smoke.ts",
+    "agent:chat": "tsx --env-file-if-exists=.env.local scripts/agent/chat.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
