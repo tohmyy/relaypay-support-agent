@@ -48,7 +48,13 @@ export interface AgentDeps {
 }
 
 /** The SDK options that keep the agent locked to the six MCP tools. Exported for tests. */
-export function buildOptions(cfg: { mcpUrl: string; mcpToken: string; model: string; systemPrompt: string }) {
+export function buildOptions(cfg: {
+  mcpUrl: string;
+  mcpToken: string;
+  model: string;
+  systemPrompt: string;
+  conversationId?: string;
+}) {
   return {
     systemPrompt: cfg.systemPrompt,
     model: cfg.model,
@@ -58,7 +64,11 @@ export function buildOptions(cfg: { mcpUrl: string; mcpToken: string; model: str
       [MCP_SERVER_NAME]: {
         type: 'http' as const,
         url: cfg.mcpUrl,
-        headers: { Authorization: `Bearer ${cfg.mcpToken}` },
+        // The MCP server uses X-Conversation-Id to tie every tool call to this call in tool_calls.
+        headers: {
+          Authorization: `Bearer ${cfg.mcpToken}`,
+          ...(cfg.conversationId ? { 'X-Conversation-Id': cfg.conversationId } : {}),
+        },
       },
     },
     strictMcpConfig: true,
@@ -157,7 +167,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
   let structured: unknown;
   let resultText: string | undefined;
 
-  for await (const message of query({ prompt, options: buildOptions(cfg) })) {
+  for await (const message of query({ prompt, options: buildOptions({ ...cfg, conversationId }) })) {
     const m = message as { type?: string; structured_output?: unknown; result?: string; is_error?: boolean };
     if (m.type === 'assistant') {
       for (const b of blocksOf(message)) {

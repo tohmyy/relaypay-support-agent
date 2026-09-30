@@ -29,15 +29,22 @@ export function isErrorResult(r: ToolResult): r is ToolErrorResult {
   return 'error' in r && typeof r.error === 'object';
 }
 
+export interface ToolContext {
+  /** Conversation id supplied by the caller (for example the X-Conversation-Id header). */
+  conversationId?: string;
+}
+
 /** validate -> execute -> normalize -> log -> return. Never throws and never leaks raw errors. */
 export async function executeTool(
   tool: ToolDef<never>,
   rawInput: unknown,
   store: Store,
+  ctx: ToolContext = {},
 ): Promise<ToolResult> {
   let result: ToolResult;
   let technicalError: string | null = null;
-  let conversationId: string | undefined;
+  // The tool input's own conversation id wins; otherwise fall back to the request context.
+  let conversationId: string | undefined = ctx.conversationId;
 
   const parsed = tool.schema.safeParse(rawInput ?? {});
   if (!parsed.success) {
@@ -46,7 +53,7 @@ export async function executeTool(
       .join('; ');
     result = errorResult('invalid_input', message);
   } else {
-    conversationId = tool.conversationId?.(parsed.data);
+    conversationId = tool.conversationId?.(parsed.data) ?? ctx.conversationId;
     try {
       result = await tool.run(parsed.data, store);
     } catch (error) {

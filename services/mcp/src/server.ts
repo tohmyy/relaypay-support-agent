@@ -2,20 +2,27 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Store } from './db/store';
-import { executeTool, isErrorResult, tools } from './tools';
+import { executeTool, isErrorResult, tools, type ToolContext } from './tools';
 import { isAuthorized } from './utils/auth';
 import { logTechnical } from './utils/logging';
 
 const MAX_BODY_BYTES = 100 * 1024;
+const CONVERSATION_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
-export function createMcpServer(store: Store): McpServer {
+/** The agent tags each request with the call it belongs to. Malformed values are ignored. */
+export function conversationIdFromHeader(value: string | string[] | undefined): string | undefined {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v && CONVERSATION_ID.test(v) ? v : undefined;
+}
+
+export function createMcpServer(store: Store, ctx: ToolContext = {}): McpServer {
   const server = new McpServer({ name: 'relaypay-support', version: '0.1.0' });
   for (const tool of tools) {
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.shape },
       async (args: unknown) => {
-        const result = await executeTool(tool, args, store);
+        const result = await executeTool(tool, args, store, ctx);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result) }],
           structuredContent: result as Record<string, unknown>,
@@ -69,7 +76,9 @@ export function createHttpServer({ store, authToken }: HttpServerOptions): Serve
         return send(res, tooLarge ? 413 : 400, { error: tooLarge ? 'body too large' : 'invalid JSON' });
       }
 
-      const mcp = createMcpServer(store);
+      const mcp = createMcpServer(store, {
+        conversationId: conversationIdFromHeader(req.headers['x-conversation-id']),
+      });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
