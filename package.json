@@ -13,14 +13,27 @@
     "dev": "npm run dev --workspace apps/web",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "tsc --noEmit -p . && npm run typecheck --workspaces --if-present",
     "test": "vitest run --passWithNoTests",
     "test:e2e": "playwright test",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "db:migrate": "tsx --env-file-if-exists=.env.local scripts/db/migrate.ts",
+    "db:seed": "tsx --env-file-if-exists=.env.local scripts/db/seed.ts",
+    "db:verify": "tsx --env-file-if-exists=.env.local scripts/db/verify.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "@supabase/supabase-js": "2.109.0",
+    "@types/node": "20.19.43",
+    "@types/pg": "8.23.1",
+    "@types/ws": "8.18.2",
+    "csv-parse": "7.0.3",
+    "pg": "8.23.0",
     "prettier": "3.9.9",
-    "vitest": "4.1.11"
-  }
+    "tsx": "4.23.15",
+    "vitest": "4.1.11",
+    "ws": "8.22.0",
+    "zod": "4.6.5"
+  },
+  "type": "module"
 }

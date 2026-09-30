@@ -25,3 +25,7 @@ npm run dev            # http://localhost:3000
 ```
 
 Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`, `npm run format`.
+
+## Database
+
+`npm run db:migrate`, `npm run db:seed`, `npm run db:verify`. See `docs/DATABASE.md`.
