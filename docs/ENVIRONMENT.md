@@ -18,3 +18,12 @@ Missing or invalid variables are reported by name only, never by value.
 
 Validation: `apps/web/lib/env.ts` (public and server schemas), `apps/web/lib/env.server.ts`
 (`server-only`, lazy so builds work without secrets), `services/*/src/env.ts` (validated at process start).
+
+## Database tooling only
+
+Read by `scripts/db/*` (`npm run db:*`), not by the app or services.
+
+| Variable | Secret | Notes |
+|---|---|---|
+| `SUPABASE_DB_URL` | yes | Postgres connection string (Project Settings > Database); used by `db:migrate` and `db:seed` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | no | Optional; lets `db:verify` check the anon key cannot read tables |
