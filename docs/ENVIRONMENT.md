@@ -11,8 +11,8 @@ Missing or invalid variables are reported by name only, never by value.
 | `VAPI_API_KEY` | web server | yes | |
 | `VAPI_ASSISTANT_ID` | web server | no | |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
-| `SUPABASE_URL` | web server, mcp | no | URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | web server, mcp | yes | Bypasses RLS; never in the browser |
+| `SUPABASE_URL` | web server, agent, mcp | no | URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | web server, agent, mcp | yes | Bypasses RLS; never in the browser |
 | `MCP_SERVER_URL` | web server, agent | no | URL |
 | `MCP_SERVER_AUTH_TOKEN` | web server, agent, mcp | yes | Shared bearer token |
 
