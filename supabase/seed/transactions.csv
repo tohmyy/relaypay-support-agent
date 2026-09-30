@@ -1,0 +1,6 @@
+transaction_id,customer_id,transaction_type,amount,currency,destination_country,status,created_at,estimated_arrival,support_summary
+TXN-9001,CUS-1001,outgoing payout,2400,USD,Kenya,processing,2026-08-16,2026-08-19,Payout is processing within the normal expected window.
+TXN-9002,CUS-1002,invoice payment,1200,EUR,Nigeria,completed,2026-08-12,2026-08-15,Invoice payment completed.
+TXN-9003,CUS-1003,outgoing payout,5300,GBP,Ghana,review required,2026-08-13,,Transaction requires compliance review. Escalate account-specific questions.
+TXN-9004,CUS-1004,outgoing payout,800,USD,Rwanda,failed,2026-08-14,,Payout failed because beneficiary details need review.
+TXN-9005,CUS-1005,incoming transfer,3100,EUR,Rwanda,delayed,2026-08-11,2026-08-18,Incoming transfer is delayed due to partner bank processing.

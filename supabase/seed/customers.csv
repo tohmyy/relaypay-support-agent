@@ -1,0 +1,6 @@
+customer_id,company_name,contact_name,contact_email,plan,account_status,region,kyc_status,support_notes
+CUS-1001,LagosLedger,Amara Okafor,amara@lagosledger.example,Growth,active,Nigeria,approved,Customer has an active account and normal support access.
+CUS-1002,NairobiOps,Daniel Mwangi,daniel@nairobiops.example,Starter,pending verification,Kenya,pending,Customer needs to complete business verification before full payment access.
+CUS-1003,AccraStack,Efua Mensah,efua@accrastack.example,Scale,restricted,Ghana,review required,Account is under compliance review. Escalate account-specific questions.
+CUS-1004,CapeCloud,Amina Jacobs,amina@capecloud.example,Growth,active,South Africa,approved,Customer often uses contractor payouts.
+CUS-1005,KigaliWorks,Patrick Ndayisaba,patrick@kigaliworks.example,Starter,active,Rwanda,approved,Customer recently started multi-currency invoicing.

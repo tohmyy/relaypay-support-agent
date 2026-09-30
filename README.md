@@ -1,17 +1,27 @@
-# Week 6: Production Customer Support Agent
+# RelayPay Voice Support Agent
 
-This folder contains the Week 6 capstone brief and reference assets for the build.
+Voice-first customer support agent for RelayPay: Next.js UI, Vapi voice layer, Claude Agent SDK agent,
+custom MCP server and Supabase data. See `PRD.md` for the brief and `docs/` for the design.
 
-## Files
+## Structure
 
-- `PRD.md`: the project brief
-- `assets/relaypay-knowledge-base.md`: approved support knowledge for the agent
-- `assets/brand-direction.md`: visual direction for the voice/web interface
-- `assets/support-decision-rules.md`: rules for answering, clarifying, escalating, or declining
-- `assets/escalation-rules.md`: support escalation policy
-- `assets/mcp-tool-requirements.md`: MCP tools students must design and implement
-- `assets/supabase-schema-and-seed-data.md`: Supabase schema and seed-data setup guidance
-- `assets/seed-data/`: starter customer, transaction, and payout records to load into Supabase
-- `assets/test-scenarios.md`: scenarios to use when testing the final agent
+- `apps/web` - Next.js voice support console
+- `services/agent` - Claude Agent SDK orchestration, prompts, retrieval
+- `services/mcp` - MCP server exposing the six support tools
+- `knowledge/` - approved knowledge base content
+- `supabase/` - migrations and seed data
+- `tests/` - agent, MCP, retrieval and evaluation tests
+- `docs/` - `TDD.md`, `UI-SPEC.md`, `BUILD-PLAN.md`
+- `assets/` - course assets (KB, rules, seed CSVs, brand)
 
-Start with `PRD.md`, then use the assets as source material for the system.
+## Getting started
+
+Requires Node 20+.
+
+```bash
+npm install
+cp .env.example .env   # fill in values (Phase 2)
+npm run dev            # http://localhost:3000
+```
+
+Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`, `npm run format`.
