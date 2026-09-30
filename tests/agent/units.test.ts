@@ -114,6 +114,12 @@ describe('SDK options', () => {
     expect(TOOL_NAMES).toHaveLength(6);
   });
 
+  it('tags MCP requests with the conversation id', () => {
+    const withConv = buildOptions({ mcpUrl: 'http://x/mcp', mcpToken: 't', model: 'm', systemPrompt: 's', conversationId: 'conv_1' });
+    expect(withConv.mcpServers.relaypay.headers).toMatchObject({ 'X-Conversation-Id': 'conv_1', Authorization: 'Bearer t' });
+    expect(o.mcpServers.relaypay.headers).not.toHaveProperty('X-Conversation-Id');
+  });
+
   it('sends the bearer token to the MCP server', () => {
     expect(o.mcpServers.relaypay).toMatchObject({
       type: 'http',
@@ -129,6 +135,12 @@ describe('system prompt file', () => {
   it('names all six tools and the four response paths', () => {
     for (const t of TOOL_NAMES) expect(text).toContain(t);
     for (const p of ['direct_answer', 'clarification', 'escalation', 'decline']) expect(text).toContain(p);
+  });
+
+  it('covers tickets and unsupported requests', () => {
+    expect(text).toContain('# Support tickets');
+    expect(text).toContain('give the ticket number once');
+    expect(text).toContain('# Unsupported requests');
   });
 
   it('covers the key safety rules', () => {
