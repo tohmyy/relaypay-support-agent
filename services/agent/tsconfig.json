@@ -1,5 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "noEmit": true, "types": ["node"] },
-  "include": ["src"]
+  "compilerOptions": {
+    "outDir": "dist",
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "retrieval"
+  ]
 }

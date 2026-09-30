@@ -4,6 +4,8 @@ const nonEmpty = z.string().min(1);
 
 const schema = z.object({
   ANTHROPIC_API_KEY: nonEmpty,
+  SUPABASE_URL: z.string().url(),
+  SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
   MCP_SERVER_URL: z.string().url(),
   MCP_SERVER_AUTH_TOKEN: nonEmpty,
 });
