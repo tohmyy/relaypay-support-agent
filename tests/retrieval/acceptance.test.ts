@@ -1,10 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { getSupabase } from '../../services/agent/src/supabase';
 import { retrieveKnowledge } from '../../services/agent/retrieval/retrieve';
 
 const live = !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // BUILD-PLAN section 13. Runs against the real Supabase project; skipped without credentials.
 describe.skipIf(!live)('retrieval acceptance (live)', () => {
+  const startedAt = new Date().toISOString();
+
+  // These calls log to retrieval_logs without a conversation id; remove what this run wrote.
+  afterAll(async () => {
+    if (live) await getSupabase().from('retrieval_logs').delete().is('conversation_id', null).gte('created_at', startedAt);
+  });
+
   const cases: [string, string[]][] = [
     ['How much does RelayPay charge?', ['How Does RelayPay Charge Fees?']],
     ['How long does an international payout take?', ['How Long Do Payments Take To Process?']],
