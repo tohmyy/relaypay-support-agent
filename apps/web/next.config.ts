@@ -1,7 +1,10 @@
-import type { NextConfig } from "next";
+import path from 'node:path';
+import { loadEnvConfig } from '@next/env';
+import type { NextConfig } from 'next';
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
+// Use the single repo-root .env.local shared with the services.
+loadEnvConfig(path.resolve(__dirname, '../..'));
+
+const nextConfig: NextConfig = {};
 
 export default nextConfig;
