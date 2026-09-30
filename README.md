@@ -33,3 +33,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## Knowledge base
 
 `npm run kb:split`, `npm run kb:ingest`. See `docs/KNOWLEDGE-BASE.md`.
+
+## MCP server
+
+`npm run mcp:dev`, `npm run mcp:smoke`. See `docs/MCP.md`.
