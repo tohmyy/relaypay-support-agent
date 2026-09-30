@@ -10,6 +10,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `NEXT_PUBLIC_VAPI_PUBLIC_KEY` | web (browser) | no | Vapi public key only |
 | `VAPI_API_KEY` | web server | yes | |
 | `VAPI_ASSISTANT_ID` | web server | no | |
+| `AGENT_MODEL` | agent | no | Optional; default `claude-sonnet-5-5` |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | web server, agent, mcp | yes | Bypasses RLS; never in the browser |
