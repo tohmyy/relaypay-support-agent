@@ -14,6 +14,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | web server, agent, mcp | yes | Bypasses RLS; never in the browser |
 | `MCP_SERVER_URL` | web server, agent | no | URL |
+| `MCP_PORT`, `MCP_HOST` | mcp | no | Optional; default 4000 and 127.0.0.1 |
 | `MCP_SERVER_AUTH_TOKEN` | web server, agent, mcp | yes | Shared bearer token |
 
 Validation: `apps/web/lib/env.ts` (public and server schemas), `apps/web/lib/env.server.ts`
