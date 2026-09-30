@@ -20,7 +20,7 @@ Requires Node 20+.
 
 ```bash
 npm install
-cp .env.example .env   # fill in values (Phase 2)
+cp .env.example .env.local   # fill in values; see docs/ENVIRONMENT.md
 npm run dev            # http://localhost:3000
 ```
 
