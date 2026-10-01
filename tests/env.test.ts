@@ -23,12 +23,19 @@ describe('env validation', () => {
     expect(parseAgent(full).ANTHROPIC_API_KEY).toBe('sk-secret');
   });
 
-  it.each(Object.keys(full))('web rejects %s when missing or empty', (key) => {
+  it.each(Object.keys(full).filter((k) => k !== 'NEXT_PUBLIC_APP_URL'))('web rejects %s when missing or empty', (key) => {
     for (const value of [undefined, '']) {
       const env = { ...full, [key]: value };
       const parse = key.startsWith('NEXT_PUBLIC_') ? parsePublicEnv : parseServerEnv;
       expect(() => parse(env)).toThrow(key);
     }
+  });
+
+  it('treats NEXT_PUBLIC_APP_URL as optional but validates it when present', () => {
+    const { NEXT_PUBLIC_APP_URL, ...rest } = full;
+    void NEXT_PUBLIC_APP_URL;
+    expect(() => parsePublicEnv(rest)).not.toThrow();
+    expect(() => parsePublicEnv({ ...full, NEXT_PUBLIC_APP_URL: 'not a url' })).toThrow('NEXT_PUBLIC_APP_URL');
   });
 
   it('services require only their own variables', () => {

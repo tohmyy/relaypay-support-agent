@@ -144,6 +144,23 @@ describe('write tools', () => {
     expect(JSON.stringify(r)).not.toContain('lagosledger');
   });
 
+  it('stores the request conversation id on the escalation and creates the conversation first', async () => {
+    const r = await executeTool(
+      tool('create_escalation'),
+      { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r' },
+      store,
+      { conversationId: 'conv_ctx-1' },
+    );
+    expect(r).toMatchObject({ escalation_id: 'ESC-000001' });
+    expect(store.escalations[0]).toMatchObject({ conversation_id: 'conv_ctx-1' });
+    expect(store.conversations.has('conv_ctx-1')).toBe(true);
+  });
+
+  it('leaves conversation_id unset when the request carries none', async () => {
+    await run('create_escalation', { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r' });
+    expect(store.escalations[0]).toMatchObject({ conversation_id: undefined });
+  });
+
   it('logs events and strips secret-looking metadata keys', async () => {
     const r = await run('log_conversation_event', {
       conversation_id: 'test-c1',

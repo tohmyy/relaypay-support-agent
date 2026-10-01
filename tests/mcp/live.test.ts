@@ -11,8 +11,8 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
   const store = live ? createStore(db) : null!;
   const startedAt = new Date().toISOString();
   const conversationId = `test-${Date.now()}`;
-  const call = (name: string, input: unknown) =>
-    executeTool(tools.find((t) => t.name === name)!, input, store);
+  const call = (name: string, input: unknown, ctx?: { conversationId?: string }) =>
+    executeTool(tools.find((t) => t.name === name)!, input, store, ctx);
 
   afterAll(async () => {
     if (!live) return;
@@ -20,6 +20,7 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
     const ticketIds = (tickets ?? []).map((t) => t.ticket_id);
     if (ticketIds.length) await db.from('escalations').delete().in('ticket_id', ticketIds);
     await db.from('escalations').delete().eq('user_email', 'test-live@example.com');
+    await db.from('escalations').delete().eq('conversation_id', conversationId);
     await db.from('support_tickets').delete().eq('conversation_id', conversationId);
     await db.from('conversation_events').delete().eq('conversation_id', conversationId);
     await db.from('tool_calls').delete().eq('conversation_id', conversationId);
@@ -98,11 +99,11 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
       category: 'payment',
       reason: 'Integration test',
       preferred_time: 'tomorrow morning',
-    })) as { escalation_id: string; status: string };
+    }, { conversationId })) as { escalation_id: string; status: string };
     expect(esc.escalation_id).toMatch(/^ESC-\d{6}$/);
     expect(esc.status).toBe('open');
     const { data: erow } = await db.from('escalations').select('*').eq('escalation_id', esc.escalation_id).single();
-    expect(erow).toMatchObject({ ticket_id: ticket.ticket_id, customer_id: 'CUS-1004', status: 'open' });
+    expect(erow).toMatchObject({ ticket_id: ticket.ticket_id, customer_id: 'CUS-1004', status: 'open', conversation_id: conversationId });
 
     expect(
       await call('log_conversation_event', {
