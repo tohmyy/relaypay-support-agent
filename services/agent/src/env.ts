@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const nonEmpty = z.string().min(1);
+const blank = (v: unknown) => (v === '' ? undefined : v);
 
 const schema = z.object({
   ANTHROPIC_API_KEY: nonEmpty,
@@ -8,7 +9,13 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
   MCP_SERVER_URL: z.string().url(),
   MCP_SERVER_AUTH_TOKEN: nonEmpty,
-  // Optional. A blank value counts as unset (default model is used).
+  // Voice server (Vapi). Blank values count as unset.
+  AGENT_API_TOKEN: z.preprocess(blank, z.string().min(16).optional()),
+  VAPI_WEBHOOK_SECRET: z.preprocess(blank, z.string().min(8).optional()),
+  AGENT_PORT: z.preprocess(blank, z.coerce.number().int().min(0).max(65535).default(4100)),
+  AGENT_HOST: z.preprocess(blank, z.string().default('127.0.0.1')),
+  AGENT_PUBLIC_URL: z.preprocess(blank, z.string().url().optional()),
+  // Optional model override; blank means the default model is used.
   AGENT_MODEL: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
 });
 
