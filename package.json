@@ -27,7 +27,9 @@
     "agent:chat": "tsx --env-file-if-exists=.env.local scripts/agent/chat.ts",
     "agent:dev": "npm run dev --workspace services/agent",
     "vapi:setup": "tsx --env-file-if-exists=.env.local scripts/vapi/setup.ts",
-    "tunnel": "cloudflared tunnel --url http://127.0.0.1:4100"
+    "tunnel": "cloudflared tunnel --url http://127.0.0.1:4100",
+    "trace": "tsx --env-file-if-exists=.env.local scripts/obs/trace.ts",
+    "report": "tsx --env-file-if-exists=.env.local scripts/obs/report.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

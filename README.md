@@ -53,3 +53,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## Voice UI
 
 `npm run dev`, then open `/` (or `/?mock=1` for a preview without a microphone). See `docs/UI.md`.
+
+## Observability
+
+`npm run trace -- <conversation_id>` and `npm run report`. See `docs/OBSERVABILITY.md`.
