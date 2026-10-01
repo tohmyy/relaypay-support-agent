@@ -49,3 +49,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## Voice (Vapi)
 
 `npm run agent:dev`, `npm run tunnel`, `npm run vapi:setup`. See `docs/VAPI.md`.
+
+## Voice UI
+
+`npm run dev`, then open `/` (or `/?mock=1` for a preview without a microphone). See `docs/UI.md`.
