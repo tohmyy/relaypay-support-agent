@@ -10,6 +10,10 @@ Missing or invalid variables are reported by name only, never by value.
 | `NEXT_PUBLIC_VAPI_PUBLIC_KEY` | web (browser) | no | Vapi public key only |
 | `VAPI_API_KEY` | web server | yes | |
 | `VAPI_ASSISTANT_ID` | web server | no | |
+| `AGENT_API_TOKEN` | agent server, vapi:setup | yes | Bearer token Vapi sends to `/chat/completions` (min 16 chars) |
+| `VAPI_WEBHOOK_SECRET` | agent server, vapi:setup | yes | Sent by Vapi as `X-Vapi-Secret` to `/vapi/events`; blank disables the route |
+| `AGENT_PORT`, `AGENT_HOST` | agent server | no | Default 4100 and 127.0.0.1 |
+| `AGENT_PUBLIC_URL` | vapi:setup | no | Public base URL (tunnel or host) Vapi should call |
 | `AGENT_MODEL` | agent | no | Optional; default `claude-sonnet-5-5` |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |

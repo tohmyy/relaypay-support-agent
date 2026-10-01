@@ -69,3 +69,7 @@ Chat rows are kept in `conversation_turns` (conversation ids start with `test-ch
 ## Workflows
 
 See `docs/WORKFLOWS.md` for workflows A-H, the scenarios they cover and the records they leave.
+
+## Voice server
+
+`services/agent/src/server.ts` exposes the agent to Vapi (custom-LLM endpoint and webhook). See `docs/VAPI.md`.
