@@ -24,7 +24,10 @@
     "kb:ingest": "tsx --env-file-if-exists=.env.local scripts/kb/ingest.ts",
     "mcp:dev": "npm run dev --workspace services/mcp",
     "mcp:smoke": "tsx --env-file-if-exists=.env.local scripts/mcp/smoke.ts",
-    "agent:chat": "tsx --env-file-if-exists=.env.local scripts/agent/chat.ts"
+    "agent:chat": "tsx --env-file-if-exists=.env.local scripts/agent/chat.ts",
+    "agent:dev": "npm run dev --workspace services/agent",
+    "vapi:setup": "tsx --env-file-if-exists=.env.local scripts/vapi/setup.ts",
+    "tunnel": "cloudflared tunnel --url http://127.0.0.1:4100"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

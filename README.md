@@ -45,3 +45,7 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 ## Workflows
 
 `docs/WORKFLOWS.md` maps support workflows A-H to the official test scenarios.
+
+## Voice (Vapi)
+
+`npm run agent:dev`, `npm run tunnel`, `npm run vapi:setup`. See `docs/VAPI.md`.
