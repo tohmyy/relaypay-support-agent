@@ -3,7 +3,7 @@ import { z } from 'zod';
 const nonEmpty = z.string().min(1);
 
 const publicSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url(),
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
   NEXT_PUBLIC_VAPI_PUBLIC_KEY: nonEmpty,
 });
 
