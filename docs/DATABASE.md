@@ -9,6 +9,7 @@ Supabase Postgres. Migrations are plain SQL in `supabase/migrations/` and are ap
 | `..._indexes_and_access.sql` | lookup indexes; RLS enabled on all tables with no policies; `anon`/`authenticated` revoked |
 
 - `conversation_events` (an 11th table, added in Phase 5) stores events from the MCP `log_conversation_event` tool.
+- `escalations.conversation_id` (nullable, Phase 9) ties an escalation to the call it came from.
 - Access is through the service-role key on the server only. Never use it in the browser.
 - `ticket_id` and `escalation_id` default to `TKT-000001` / `ESC-000001` style values.
 - Seed status values keep the CSV wording (for example `review required`), stored as free text.

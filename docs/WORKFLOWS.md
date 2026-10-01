@@ -27,8 +27,8 @@ ignored). Retrieval logs and turns are written by the agent with the same id.
 
 - **Fee wording.** Scenario 1 lists currency, recipient country and account setup as fee factors. The approved KB says
   only transaction type, corridor and payment method, and has no fee amounts, so the agent stays with the KB.
-- **Escalation records** have no conversation id column. They link through the ticket (`ticket_id`) and through the
-  `create_escalation` row in `tool_calls`, which does carry the conversation id.
+- **Escalation records** carry the conversation id (`escalations.conversation_id`, added in Phase 9), set by the MCP
+  server from the request's `X-Conversation-Id`, in addition to the link through the ticket.
 - **Escalation vs ticket.** An escalation is only "raised" once `create_escalation` succeeds; until then the agent
   keeps collecting details.
 - **No caller verification** beyond what the customer says; lookups are support context, not proof of identity.

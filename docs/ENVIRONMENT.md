@@ -6,7 +6,7 @@ Missing or invalid variables are reported by name only, never by value.
 
 | Variable | Used by | Secret | Notes |
 |---|---|---|---|
-| `NEXT_PUBLIC_APP_URL` | web | no | Full URL of the app |
+| `NEXT_PUBLIC_APP_URL` | web | no | Optional; full URL of the app |
 | `NEXT_PUBLIC_VAPI_PUBLIC_KEY` | web (browser) | no | Vapi public key only |
 | `VAPI_API_KEY` | web server | yes | |
 | `VAPI_ASSISTANT_ID` | web server | no | |
@@ -33,3 +33,13 @@ Read by `scripts/db/*` (`npm run db:*`), not by the app or services.
 |---|---|---|
 | `SUPABASE_DB_URL` | yes | Postgres connection string (Project Settings > Database); used by `db:migrate` and `db:seed` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | no | Optional; lets `db:verify` check the anon key cannot read tables |
+
+## Web preview
+
+| Variable | Notes |
+|---|---|
+| `NEXT_PUBLIC_VOICE_MOCK` | `1` plays a scripted conversation instead of a real call (previews and demos) |
+| `ENABLE_DEV_STATES` | `1` serves `/dev/states` in production (development only by default) |
+| `NEXT_DIST_DIR` | Build directory for the web app (default `.next`); lets a second copy run beside a dev server |
+
+Next reads `.env.local` once at startup: restart `npm run dev` after changing it.
