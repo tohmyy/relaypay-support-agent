@@ -7,7 +7,10 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
   MCP_SERVER_AUTH_TOKEN: nonEmpty,
   // Optional. A blank value in .env.local counts as unset.
-  MCP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(0).max(65535).default(4000)),
+  MCP_PORT: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(0).max(65535).default(4000),
+  ),
   MCP_HOST: z.preprocess((v) => (v === '' ? undefined : v), z.string().default('127.0.0.1')),
 });
 

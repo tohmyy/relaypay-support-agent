@@ -1,9 +1,13 @@
 import { z } from 'zod';
+import { pick } from '../utils/logging';
 import { lookupPayoutSchema } from '../validation/schemas';
 import type { ToolDef } from './types';
 
 export const lookupPayout: ToolDef<z.infer<typeof lookupPayoutSchema>> = {
   name: 'lookup_payout',
+  purpose: 'Look up a payout to report its status',
+  summarize: (r) =>
+    r.found === true ? `found ${pick(r.payout_id)}, status ${pick(r.status)}` : 'not found',
   description:
     'Look up a payout by payout_id or transaction_id (at least one). Returns status, schedule, ' +
     'failure reason and a support summary. A compliance review status means escalation rules apply.',

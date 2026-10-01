@@ -29,6 +29,8 @@ export interface PayoutRow {
 export interface ToolCallRecord {
   conversation_id?: string | null;
   tool_name: string;
+  purpose?: string;
+  duration_ms?: number;
   input_summary: string;
   result_summary: string;
   status: 'success' | 'failed' | 'not_found';

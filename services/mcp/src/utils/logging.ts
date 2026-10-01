@@ -1,7 +1,25 @@
-// Technical detail goes to stderr only; it is never returned to the caller.
-export function logTechnical(context: string, error: unknown): void {
+import { redactPii } from './redact';
+
+/**
+ * One JSON line per event on stderr. Technical detail goes here only; it is never returned to the caller.
+ * Messages are redacted, and callers must not pass secrets.
+ */
+export function logTechnical(
+  context: string,
+  error: unknown,
+  fields: { conversation_id?: string } = {},
+): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[mcp] ${context}: ${message}`);
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'error',
+      service: 'mcp',
+      event: context,
+      message: redactPii(message).slice(0, 500),
+      ...fields,
+    }),
+  );
 }
 
 const REDACTED_KEYS = new Set([
@@ -24,4 +42,11 @@ export function summarizeInput(input: unknown): string {
     })
     .filter(Boolean)
     .join(', ');
+}
+
+/** Safe one-line description of a tool result: ids and statuses only, never free text. */
+export function pick(value: unknown): string {
+  return redactPii(String(value ?? 'unknown'))
+    .replace(/[^\w .:-]/g, '')
+    .slice(0, 40);
 }

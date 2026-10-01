@@ -1,9 +1,13 @@
 import { z } from 'zod';
+import { pick } from '../utils/logging';
 import { lookupTransactionSchema } from '../validation/schemas';
 import type { ToolDef } from './types';
 
 export const lookupTransaction: ToolDef<z.infer<typeof lookupTransactionSchema>> = {
   name: 'lookup_transaction',
+  purpose: 'Look up a transaction to report its status',
+  summarize: (r) =>
+    r.found === true ? `found ${pick(r.transaction_id)}, status ${pick(r.status)}` : 'not found',
   description:
     'Look up a transaction by transaction_id (required, e.g. TXN-9001). Returns status, amount, ' +
     'currency, estimated arrival and a support summary. Translate the result into customer-friendly language.',

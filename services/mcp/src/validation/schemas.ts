@@ -13,7 +13,13 @@ export const TICKET_CATEGORIES = [
   'other',
 ] as const;
 export const TICKET_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
-export const ESCALATION_CATEGORIES = ['compliance', 'account', 'dispute', 'payment', 'other'] as const;
+export const ESCALATION_CATEGORIES = [
+  'compliance',
+  'account',
+  'dispute',
+  'payment',
+  'other',
+] as const;
 
 export const lookupCustomerSchema = z
   .strictObject({

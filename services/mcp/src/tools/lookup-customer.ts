@@ -1,9 +1,15 @@
 import { z } from 'zod';
+import { pick } from '../utils/logging';
 import { lookupCustomerSchema } from '../validation/schemas';
 import type { ToolDef } from './types';
 
 export const lookupCustomer: ToolDef<z.infer<typeof lookupCustomerSchema>> = {
   name: 'lookup_customer',
+  purpose: 'Look up a customer account to answer an account question',
+  summarize: (r) =>
+    r.found === true
+      ? `found ${pick(r.customer_id)}, account ${pick(r.account_status)}`
+      : 'not found',
   description:
     'Find a RelayPay customer account by customer_id, email or company_name (at least one). ' +
     'Returns account status and internal support notes. Never read support_notes aloud.',

@@ -21,6 +21,8 @@ export function sanitizeMetadata(value: unknown): unknown {
 
 export const logConversationEvent: ToolDef<z.infer<typeof logConversationEventSchema>> = {
   name: 'log_conversation_event',
+  purpose: 'Record an important agent action or decision',
+  summarize: () => 'event logged',
   description:
     'Record an important agent action or decision. Requires conversation_id, event_type and summary. ' +
     'Do not put personal data or secrets in metadata.',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { pick } from '../utils/logging';
 import { ToolError } from '../utils/errors';
 import {
   createSupportTicketSchema,
@@ -9,13 +10,21 @@ import type { ToolDef } from './types';
 
 export const createSupportTicket: ToolDef<z.infer<typeof createSupportTicketSchema>> = {
   name: 'create_support_ticket',
+  purpose: 'Log an issue for support follow-up',
+  summarize: (r) => `ticket ${pick(r.ticket_id)} created`,
   description:
     'Log an issue for support follow-up. Requires category, priority, summary and conversation_id; ' +
     'customer_id is optional. Returns the ticket_id.',
   shape: {
     customer_id: z.string().optional(),
-    category: z.string().optional().describe(`one of: ${TICKET_CATEGORIES.join(', ')}`),
-    priority: z.string().optional().describe(`one of: ${TICKET_PRIORITIES.join(', ')}`),
+    category: z
+      .string()
+      .optional()
+      .describe(`one of: ${TICKET_CATEGORIES.join(', ')}`),
+    priority: z
+      .string()
+      .optional()
+      .describe(`one of: ${TICKET_PRIORITIES.join(', ')}`),
     summary: z.string().optional().describe('short factual summary; no secrets'),
     conversation_id: z.string().optional(),
   },

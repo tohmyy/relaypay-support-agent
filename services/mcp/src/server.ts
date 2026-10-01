@@ -34,7 +34,12 @@ export function createMcpServer(store: Store, ctx: ToolContext = {}): McpServer 
   return server;
 }
 
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
   res.end(JSON.stringify(body));
 }
@@ -66,14 +71,17 @@ export function createHttpServer({ store, authToken }: HttpServerOptions): Serve
       if (!isAuthorized(req.headers.authorization, authToken)) {
         return send(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
       }
-      if (req.method !== 'POST') return send(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+      if (req.method !== 'POST')
+        return send(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
 
       let body: unknown;
       try {
         body = await readJson(req);
       } catch (error) {
         const tooLarge = error instanceof RangeError;
-        return send(res, tooLarge ? 413 : 400, { error: tooLarge ? 'body too large' : 'invalid JSON' });
+        return send(res, tooLarge ? 413 : 400, {
+          error: tooLarge ? 'body too large' : 'invalid JSON',
+        });
       }
 
       const mcp = createMcpServer(store, {
