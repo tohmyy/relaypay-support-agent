@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runTurn, type AgentDeps } from '../../services/agent/src/agent';
 import { LEAK_FALLBACK } from '../../services/agent/src/guard';
 
@@ -7,7 +7,7 @@ type Row = Record<string, unknown>;
 
 /** Minimal in-memory stand-in for the parts of supabase-js the agent uses. */
 function fakeDb() {
-  const tables: Record<string, Row[]> = { conversations: [], conversation_turns: [] };
+  const tables: Record<string, Row[]> = { conversations: [], conversation_turns: [], conversation_events: [] };
   const from = (name: string) => {
     const rows = tables[name];
     let filters: [string, unknown][] = [];
@@ -66,7 +66,13 @@ function scriptedQuery(messages: unknown[]) {
   return { query, calls };
 }
 
-const result = (answer: unknown) => ({ type: 'result', subtype: 'success', structured_output: answer, result: '' });
+const result = (answer: unknown, extra: Record<string, unknown> = {}) => ({
+  type: 'result',
+  subtype: 'success',
+  structured_output: answer,
+  result: '',
+  ...extra,
+});
 const toolUse = (id: string, name: string) => ({
   type: 'assistant',
   message: { content: [{ type: 'tool_use', id, name: `mcp__relaypay__${name}`, input: {} }] },
@@ -180,6 +186,39 @@ describe('runTurn', () => {
     const r = await runTurn({ conversationId: 'test-6', userMessage: 'hello' }, deps(query));
     expect(r.answerType).toBe('decline');
     expect(r.response).not.toContain('not json');
+  });
+
+  it('records how long the reply took and what it cost', async () => {
+    const { query } = scriptedQuery([
+      result({ answer_type: 'direct_answer', spoken_response: 'Fine.' }, { total_cost_usd: 0.0421 }),
+    ]);
+    await runTurn({ conversationId: 'test-7', userMessage: 'hello' }, deps(query));
+    const row = env.tables.conversation_turns[0];
+    expect(row.cost_usd).toBe(0.0421);
+    expect(typeof row.latency_ms).toBe('number');
+    expect(row.latency_ms as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it('stores null cost when the SDK reports none', async () => {
+    const { query } = scriptedQuery([result({ answer_type: 'direct_answer', spoken_response: 'Fine.' })]);
+    await runTurn({ conversationId: 'test-8', userMessage: 'hello' }, deps(query));
+    expect(env.tables.conversation_turns[0].cost_usd).toBeNull();
+  });
+
+  it('leaves an error event behind when a turn fails, and still raises the error', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = (() => {
+      throw new Error('model unreachable for ada@example.com');
+    }) as unknown as NonNullable<AgentDeps['query']>;
+    await expect(runTurn({ conversationId: 'test-9', userMessage: 'hello' }, deps(failing))).rejects.toThrow(/unreachable/);
+    expect(env.tables.conversation_events).toHaveLength(1);
+    expect(env.tables.conversation_events[0]).toMatchObject({
+      conversation_id: 'test-9',
+      event_type: 'error',
+      metadata: { source: 'agent.runTurn', message: 'model unreachable for [email]' },
+    });
+    expect(env.tables.conversation_turns).toHaveLength(0);
+    spy.mockRestore();
   });
 
   it('rejects empty, oversized and id-less input before doing any work', async () => {

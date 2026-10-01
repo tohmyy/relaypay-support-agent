@@ -83,8 +83,9 @@ describe('response shapes', () => {
 });
 
 /** Tiny in-memory supabase stand-in for conversations and turns. */
-function fakeDb(initial: { final_status?: string | null; turns?: number } = {}) {
+function fakeDb(initial: { final_status?: string | null; turns?: number; failUpdate?: boolean } = {}) {
   const conversations: Record<string, unknown>[] = [];
+  const events: Record<string, unknown>[] = [];
   const turnCount = initial.turns ?? 0;
   const from = (table: string) => {
     let filter: [string, unknown] | undefined;
@@ -93,6 +94,10 @@ function fakeDb(initial: { final_status?: string | null; turns?: number } = {}) 
         if (!conversations.some((c) => c.conversation_id === row.conversation_id)) {
           conversations.push({ ...row, final_status: initial.final_status ?? null });
         }
+        return Promise.resolve({ data: null, error: null });
+      },
+      insert(row: Record<string, unknown>) {
+        events.push(row);
         return Promise.resolve({ data: null, error: null });
       },
       select() {
@@ -105,6 +110,7 @@ function fakeDb(initial: { final_status?: string | null; turns?: number } = {}) 
       update(patch: Record<string, unknown>) {
         return {
           eq: (col: string, value: unknown) => {
+            if (initial.failUpdate) return Promise.resolve({ error: { message: 'boom at db.internal user a@b.co' } });
             conversations.filter((c) => c[col] === value).forEach((c) => Object.assign(c, patch));
             return Promise.resolve({ error: null });
           },
@@ -120,7 +126,7 @@ function fakeDb(initial: { final_status?: string | null; turns?: number } = {}) 
     };
     return b;
   };
-  return { db: { from } as unknown as SupabaseClient, conversations };
+  return { db: { from } as unknown as SupabaseClient, conversations, events };
 }
 
 describe('handleVapiEvent', () => {
@@ -141,6 +147,35 @@ describe('handleVapiEvent', () => {
     expect(r.finalStatus).toBe('resolved');
     expect(conversations[0].ended_at).toBeTruthy();
     expect((conversations[0].summary as string).length).toBe(1000);
+  });
+
+  it('records how the call ended using whitelisted fields only', async () => {
+    const { db, events } = fakeDb({ turns: 1 });
+    await handleVapiEvent(
+      db,
+      report({
+        endedReason: 'customer-ended-call',
+        durationSeconds: 61.23456,
+        cost: 0.4321,
+        transcript: 'my email is secret@example.com',
+        artifact: { messages: ['private'] },
+      }),
+    );
+    const ended = events.find((e) => e.event_type === 'call_ended')!;
+    expect(ended).toMatchObject({
+      conversation_id: 'vapi_call9',
+      metadata: { endedReason: 'customer-ended-call', durationSeconds: 61.235, cost: 0.432 },
+    });
+    expect(JSON.stringify(ended)).not.toMatch(/secret|private|transcript/);
+  });
+
+  it('records an error event, scrubbed, when handling a call event fails', async () => {
+    const { db, events } = fakeDb({ turns: 1, failUpdate: true });
+    await expect(handleVapiEvent(db, report())).rejects.toThrow(/end conversation/);
+    const err = events.find((e) => e.event_type === 'error')!;
+    expect(err).toMatchObject({ conversation_id: 'vapi_call9', metadata: { source: 'vapi.webhook' } });
+    expect(JSON.stringify(err)).not.toContain('a@b.co');
+    expect(JSON.stringify(err)).toContain('[email]');
   });
 
   it('ends a call with no turns as abandoned', async () => {
