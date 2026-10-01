@@ -55,7 +55,7 @@ export async function executeTool(
   } else {
     conversationId = tool.conversationId?.(parsed.data) ?? ctx.conversationId;
     try {
-      result = await tool.run(parsed.data, store);
+      result = await tool.run(parsed.data, store, ctx);
     } catch (error) {
       if (error instanceof ToolError) {
         result = errorResult(error.code, error.message);

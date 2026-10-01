@@ -18,14 +18,16 @@ export const createEscalation: ToolDef<z.infer<typeof createEscalationSchema>> =
     preferred_time: z.string().optional(),
   },
   schema: createEscalationSchema,
-  async run(input, store) {
+  async run(input, store, ctx) {
     if (input.customer_id && !(await store.customerExists(input.customer_id))) {
       throw new ToolError('reference_not_found', 'That customer_id does not exist.');
     }
     if (input.ticket_id && !(await store.ticketExists(input.ticket_id))) {
       throw new ToolError('reference_not_found', 'That ticket_id does not exist.');
     }
-    const escalationId = await store.insertEscalation(input);
+    // Tie the record to the call (the row must exist first: conversation_id is a foreign key).
+    if (ctx.conversationId) await store.ensureConversation(ctx.conversationId);
+    const escalationId = await store.insertEscalation({ ...input, conversation_id: ctx.conversationId });
     return {
       escalation_id: escalationId,
       status: 'open',

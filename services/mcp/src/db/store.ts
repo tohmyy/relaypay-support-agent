@@ -63,6 +63,7 @@ export interface Store {
     category: string;
     reason: string;
     preferred_time?: string;
+    conversation_id?: string;
   }): Promise<string>;
   insertEvent(e: {
     conversation_id: string;
