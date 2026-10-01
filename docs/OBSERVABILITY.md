@@ -1,0 +1,83 @@
+# Observability
+
+Every support call can be reconstructed from the database, and every failure leaves a trace there as well as in the
+server log.
+
+## What is recorded, and where
+
+| Need (BUILD-PLAN section 35) | Where | Written by |
+|---|---|---|
+| Conversation start | `conversations` (`started_at`, `channel`) | agent on the first turn, or the Vapi webhook on `in-progress` |
+| Conversation end | `conversations` (`ended_at`, `final_status`, `summary`) and a `call_ended` row in `conversation_events` (`endedReason`, `durationSeconds`, `cost`) | Vapi `end-of-call-report` webhook |
+| User and assistant turns | `conversation_turns` (transcript, reply, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**) | agent |
+| Retrievals | `retrieval_logs` (query with personal data masked, source titles, summary) | agent retrieval |
+| Tool calls | `tool_calls` (`tool_name`, **`purpose`**, `input_summary`, `result_summary`, `status`, `error`, **`duration_ms`**, timestamp, conversation id) | MCP server, for every call |
+| Tickets | `support_tickets` (conversation id) | MCP `create_support_ticket` |
+| Escalations | `escalations` (conversation id, ticket id, status, requested time) | MCP `create_escalation` |
+| Errors | `conversation_events` with `event_type = 'error'` and `{source, message}` (message masked and cut to 300 characters); `tool_calls` rows with `status = 'failed'`; JSON lines on stderr | agent (`agent.runTurn`, `vapi.webhook`), MCP |
+
+Bold columns were added in Phase 10 (migration `..._observability.sql`, all nullable).
+
+Every server log line is one JSON object on stderr: `{ts, level, service, event, conversation_id?, message?}`.
+Secret-looking fields (`token`, `key`, `secret`, `password`, `authorization`, `cookie`) are dropped and strings are
+scrubbed before they are written.
+
+## Looking at a call
+
+```bash
+npm run trace -- vapi_<call id>          # time-ordered story of one call
+npm run trace -- vapi_<call id> --json   # same, machine readable
+npm run report                           # numbers for everything
+npm run report -- --since 24h            # or 30m, 7d
+```
+
+Example trace:
+
+```
+04:19:01.890  customer   "Can you check payout PAY-7002?"
+04:19:02.086  start      call started (voice)
+04:19:02.547  retrieval  searched "Can you check payout PAY-7002?" -> Payout And Beneficiary Management; ... (4)
+04:19:06.118  tool       lookup_payout success 110ms - found PAY-7002, status review required [Look up a payout to report its status]
+04:19:09.050  agent      (escalation, 7.2s, $0.013) "Thanks for waiting. That payout is under review, ..."
+```
+
+The customer line is placed at the time they spoke (reply time minus latency), so the order reads naturally. The trace
+masks emails and long numbers in what it prints even though stored transcripts are kept as spoken.
+
+The report shows conversations by final status, turns by answer type, reply time (p50, p95, max), the model cost
+estimate, tickets, escalations, events by type, and per-tool calls with success, not-found and failed counts and
+average duration. Use it as testing evidence.
+
+To find problems directly:
+
+```sql
+-- slowest replies
+select conversation_id, turn_number, latency_ms from conversation_turns order by latency_ms desc nulls last limit 10;
+-- failures
+select * from conversation_events where event_type = 'error' order by created_at desc;
+select * from tool_calls where status = 'failed' order by created_at desc;
+```
+
+## Privacy and retention
+
+- **Transcripts are stored verbatim** in `conversation_turns` because reconstruction needs them. If the customer
+  types or says their email (for example through the escalation form), it appears in that transcript and in the
+  escalation record by design. Treat these tables as personal data.
+- **Everything else is scrubbed or id-only.** `tool_calls.input_summary` keeps identifiers and replaces names, emails,
+  reasons and summaries with `<provided>`. `result_summary` is built only from ids and statuses (for example
+  `found TXN-9001, status processing`). Retrieval queries, stored errors and log lines pass through the masker.
+- **The masker is best effort.** It replaces emails with `[email]` and numbers of 9 or more digits with `[number]`.
+  Reference ids (`TXN-9001`), dates and short numbers are left alone. It is a safety net, not a guarantee.
+- **Never logged**: API keys, tokens, the webhook secret, internal `support_notes`, or raw database errors returned to
+  callers.
+- **Retention**: nothing is deleted automatically. Decide a retention period before real customers use this, and run a
+  scheduled clean-up of old rows (deployment phase). Vapi keeps its own call logs and recordings, which are outside
+  this repository.
+
+## Known gaps
+
+- Browser-side problems (for example a refused microphone) are shown to the customer but not reported to the server.
+- A call that ends without a webhook (tunnel down) stays open in `conversations` with no `ended_at`; the report shows
+  these as "still open".
+- Model cost is the SDK's estimate, not a bill. Vapi's own cost is stored only as reported in its end-of-call report.
+- Running `mcp:dev` and `agent:dev` from before this change do not write the new fields; restart them.

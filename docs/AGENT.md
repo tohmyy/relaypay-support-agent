@@ -73,3 +73,7 @@ See `docs/WORKFLOWS.md` for workflows A-H, the scenarios they cover and the reco
 ## Voice server
 
 `services/agent/src/server.ts` exposes the agent to Vapi (custom-LLM endpoint and webhook). See `docs/VAPI.md`.
+
+## Logging
+
+Each turn stores `latency_ms` and `cost_usd`; failures are written as `error` events and as JSON log lines. Retrieval queries are masked before they are stored. See `OBSERVABILITY.md`.

@@ -61,3 +61,7 @@ a real client call), `tests/mcp/live.test.ts` (against Supabase; skipped without
 Send `X-Conversation-Id: <conversation id>` (letters, digits, `_ . : -`, max 64) on the MCP connection and every tool
 call is written to `tool_calls` with that conversation id, even for tools whose input has no conversation field.
 An id inside the tool input wins over the header. Malformed values are ignored. The agent sets this header on every turn.
+
+## Logging
+
+Each call writes a `tool_calls` row with a fixed `purpose`, a `duration_ms`, an `input_summary` that keeps ids and masks free text, and a `result_summary` made only of ids and statuses. Stored errors are scrubbed. See `OBSERVABILITY.md`.
