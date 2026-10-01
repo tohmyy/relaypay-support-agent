@@ -3,6 +3,7 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { retrieveKnowledge, type KbResult } from '../retrieval/retrieve';
 import { applyGuard } from './guard';
+import { recordError } from './observability';
 import { ensureConversation, loadHistory, saveTurn } from './history';
 import { buildPrompt, retrievalQuery } from './prompt';
 import { answerJsonSchema, parseAnswer, type AnswerType } from './schema';
@@ -98,7 +99,9 @@ function toolResultText(block: Block): string {
   if (typeof block.content === 'string') return block.content;
   if (Array.isArray(block.content)) {
     return block.content
-      .map((c) => (c && typeof c === 'object' && 'text' in c ? String((c as { text: unknown }).text) : ''))
+      .map((c) =>
+        c && typeof c === 'object' && 'text' in c ? String((c as { text: unknown }).text) : '',
+      )
       .join('');
   }
   return '';
@@ -136,88 +139,118 @@ function resolveConfig(deps: AgentDeps) {
 export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<TurnResult> {
   const conversationId = input.conversationId?.trim();
   const userMessage = input.userMessage?.trim();
-  if (!conversationId || conversationId.length > 64) throw new Error('conversationId is required (max 64 chars)');
+  if (!conversationId || conversationId.length > 64)
+    throw new Error('conversationId is required (max 64 chars)');
   if (!userMessage) throw new Error('userMessage is required');
   if (userMessage.length > MAX_MESSAGE_CHARS) {
     throw new Error(`userMessage is too long (max ${MAX_MESSAGE_CHARS} characters)`);
   }
 
+  const startedAt = Date.now();
   const cfg = resolveConfig(deps);
   const db = deps.db ?? getSupabase();
   const retrieve = deps.retrieve ?? ((q, o) => retrieveKnowledge(q, o));
   const query = deps.query ?? sdkQuery;
 
-  await ensureConversation(db, conversationId);
-  const history = await loadHistory(db, conversationId);
-  const knowledge = (await retrieve(retrievalQuery(userMessage, history.turns), { conversationId })).chunks;
-
-  const prompt = buildPrompt({
-    conversationId,
-    userMessage,
-    history: history.turns,
-    knowledge,
-    escalationRaised: history.escalationRaised,
-  });
-
-  // Run the model and watch its tool traffic.
-  const toolNames = new Map<string, string>();
-  const toolsUsed: string[] = [];
-  const internalTexts: string[] = [];
-  let escalationCreated = false;
-  let structured: unknown;
-  let resultText: string | undefined;
-
-  for await (const message of query({ prompt, options: buildOptions({ ...cfg, conversationId }) })) {
-    const m = message as { type?: string; structured_output?: unknown; result?: string; is_error?: boolean };
-    if (m.type === 'assistant') {
-      for (const b of blocksOf(message)) {
-        // Skip the SDK's own StructuredOutput pseudo-tool; only report our MCP tools.
-        if (b.type === 'tool_use' && b.id && b.name?.startsWith(`mcp__${MCP_SERVER_NAME}__`)) {
-          const short = b.name.replace(`mcp__${MCP_SERVER_NAME}__`, '');
-          toolNames.set(b.id, short);
-          toolsUsed.push(short);
-        }
-      }
-    } else if (m.type === 'user') {
-      for (const b of blocksOf(message)) {
-        if (b.type !== 'tool_result' || !b.tool_use_id || b.is_error) continue;
-        const parsed = tryJson(toolResultText(b));
-        const name = toolNames.get(b.tool_use_id);
-        if (name === 'lookup_customer' && typeof parsed?.support_notes === 'string') {
-          internalTexts.push(parsed.support_notes);
-        }
-        if (name === 'create_escalation' && typeof parsed?.escalation_id === 'string') {
-          escalationCreated = true;
-        }
-      }
-    } else if (m.type === 'result') {
-      structured = m.structured_output;
-      resultText = m.result;
-    }
+  try {
+    return await handleTurn();
+  } catch (error) {
+    // A failed turn leaves a trace in the database too; the caller still gets the error.
+    await recordError(db, conversationId, 'agent.runTurn', error);
+    throw error;
   }
 
-  const answer = parseAnswer(structured, resultText);
-  const guarded = applyGuard({
-    response: answer.spoken_response,
-    answerType: escalationCreated ? 'escalation' : answer.answer_type,
-    internalTexts,
-  });
+  async function handleTurn(): Promise<TurnResult> {
+    await ensureConversation(db, conversationId);
+    const history = await loadHistory(db, conversationId);
+    const knowledge = (
+      await retrieve(retrievalQuery(userMessage, history.turns), { conversationId })
+    ).chunks;
 
-  await saveTurn(db, {
-    conversationId,
-    turnNumber: history.nextTurnNumber,
-    userMessage,
-    response: guarded.response,
-    answerType: guarded.answerType,
-    escalationCreated,
-    confidenceNote: guarded.leaked ? 'output guard replaced a response that repeated internal notes' : answer.confidence_note,
-  });
+    const prompt = buildPrompt({
+      conversationId,
+      userMessage,
+      history: history.turns,
+      knowledge,
+      escalationRaised: history.escalationRaised,
+    });
 
-  return {
-    response: guarded.response,
-    answerType: guarded.answerType,
-    sources: knowledge.map((k) => k.title),
-    toolsUsed,
-    escalated: guarded.answerType === 'escalation' || escalationCreated,
-  };
+    // Run the model and watch its tool traffic.
+    const toolNames = new Map<string, string>();
+    const toolsUsed: string[] = [];
+    const internalTexts: string[] = [];
+    let escalationCreated = false;
+    let structured: unknown;
+    let resultText: string | undefined;
+    let costUsd: number | undefined;
+
+    for await (const message of query({
+      prompt,
+      options: buildOptions({ ...cfg, conversationId }),
+    })) {
+      const m = message as {
+        type?: string;
+        structured_output?: unknown;
+        result?: string;
+        is_error?: boolean;
+      };
+      if (m.type === 'assistant') {
+        for (const b of blocksOf(message)) {
+          // Skip the SDK's own StructuredOutput pseudo-tool; only report our MCP tools.
+          if (b.type === 'tool_use' && b.id && b.name?.startsWith(`mcp__${MCP_SERVER_NAME}__`)) {
+            const short = b.name.replace(`mcp__${MCP_SERVER_NAME}__`, '');
+            toolNames.set(b.id, short);
+            toolsUsed.push(short);
+          }
+        }
+      } else if (m.type === 'user') {
+        for (const b of blocksOf(message)) {
+          if (b.type !== 'tool_result' || !b.tool_use_id || b.is_error) continue;
+          const parsed = tryJson(toolResultText(b));
+          const name = toolNames.get(b.tool_use_id);
+          if (name === 'lookup_customer' && typeof parsed?.support_notes === 'string') {
+            internalTexts.push(parsed.support_notes);
+          }
+          if (name === 'create_escalation' && typeof parsed?.escalation_id === 'string') {
+            escalationCreated = true;
+          }
+        }
+      } else if (m.type === 'result') {
+        structured = m.structured_output;
+        resultText = m.result;
+        if (typeof (m as { total_cost_usd?: unknown }).total_cost_usd === 'number') {
+          costUsd = (m as { total_cost_usd: number }).total_cost_usd;
+        }
+      }
+    }
+
+    const answer = parseAnswer(structured, resultText);
+    const guarded = applyGuard({
+      response: answer.spoken_response,
+      answerType: escalationCreated ? 'escalation' : answer.answer_type,
+      internalTexts,
+    });
+
+    await saveTurn(db, {
+      conversationId,
+      turnNumber: history.nextTurnNumber,
+      userMessage,
+      response: guarded.response,
+      answerType: guarded.answerType,
+      escalationCreated,
+      latencyMs: Date.now() - startedAt,
+      costUsd,
+      confidenceNote: guarded.leaked
+        ? 'output guard replaced a response that repeated internal notes'
+        : answer.confidence_note,
+    });
+
+    return {
+      response: guarded.response,
+      answerType: guarded.answerType,
+      sources: knowledge.map((k) => k.title),
+      toolsUsed,
+      escalated: guarded.answerType === 'escalation' || escalationCreated,
+    };
+  }
 }

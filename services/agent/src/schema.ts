@@ -45,5 +45,9 @@ export function parseAnswer(structured: unknown, text: string | undefined): Answ
     const parsed = answerSchema.safeParse(c);
     if (parsed.success) return parsed.data;
   }
-  return { answer_type: 'decline', spoken_response: SAFE_DECLINE, confidence_note: 'unparseable model output' };
+  return {
+    answer_type: 'decline',
+    spoken_response: SAFE_DECLINE,
+    confidence_note: 'unparseable model output',
+  };
 }

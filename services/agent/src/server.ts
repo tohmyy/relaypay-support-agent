@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TurnInput, TurnResult } from './agent';
+import { errorMessage, logEvent } from './logger';
 import {
   completionJson,
   extractUserMessage,
@@ -37,7 +38,12 @@ function bearer(header: string | undefined): string | undefined {
   return /^Bearer (.+)$/.exec(header ?? '')?.[1];
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+function sendJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
   res.end(JSON.stringify(body));
 }
@@ -53,8 +59,8 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function logTechnical(context: string, error: unknown) {
-  console.error(`[agent] ${context}: ${error instanceof Error ? error.message : String(error)}`);
+function logTechnical(context: string, error: unknown, conversationId?: string) {
+  logEvent('error', context, { conversation_id: conversationId, message: errorMessage(error) });
 }
 
 /**
@@ -69,18 +75,22 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     const previous = queues.get(conversationId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(task);
     queues.set(conversationId, next);
-    void next.finally(() => {
-      if (queues.get(conversationId) === next) queues.delete(conversationId);
-    }).catch(() => undefined);
+    void next
+      .finally(() => {
+        if (queues.get(conversationId) === next) queues.delete(conversationId);
+      })
+      .catch(() => undefined);
     return next;
   }
 
   async function answer(conversationId: string, userMessage: string): Promise<string> {
     try {
-      const r = await serialized(conversationId, () => opts.runTurn({ conversationId, userMessage }));
+      const r = await serialized(conversationId, () =>
+        opts.runTurn({ conversationId, userMessage }),
+      );
       return r.response;
     } catch (error) {
-      logTechnical('runTurn failed', error);
+      logTechnical('runTurn failed', error, conversationId);
       return SAFE_SPOKEN_ERROR;
     }
   }
@@ -91,7 +101,9 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       body = (await readJson(req)) as Record<string, unknown>;
     } catch (error) {
       const tooLarge = error instanceof RangeError;
-      return sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'body too large' : 'invalid JSON' });
+      return sendJson(res, tooLarge ? 413 : 400, {
+        error: tooLarge ? 'body too large' : 'invalid JSON',
+      });
     }
     if (process.env.AGENT_DEBUG) {
       // Shape only, never content: which fields Vapi sends, to confirm where the call id arrives.
@@ -104,7 +116,10 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     if (!userMessage) return sendJson(res, 400, { error: 'no user message' });
     const conversationId = resolveFromChatBody(body, req.headers['x-conversation-id']);
     if (!conversationId) {
-      logTechnical('chat request', new Error('no conversation id (call.id, metadata.conversation_id or header)'));
+      logTechnical(
+        'chat request rejected',
+        new Error('no conversation id (call.id, metadata.conversation_id or header)'),
+      );
       return sendJson(res, 400, { error: 'conversation id required' });
     }
 
@@ -158,7 +173,8 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       if (req.method === 'GET' && path === '/health') return sendJson(res, 200, { ok: true });
 
       if (path === '/vapi/events') {
-        if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
         return await vapiEvents(req, res);
       }
 
@@ -166,7 +182,8 @@ export function createAgentServer(opts: AgentServerOptions): Server {
         if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
           return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
         }
-        if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
         return await chatCompletions(req, res);
       }
 

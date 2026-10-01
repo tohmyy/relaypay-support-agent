@@ -20,5 +20,9 @@ const server = createAgentServer({
 server.listen(env.AGENT_PORT, env.AGENT_HOST, () => {
   console.log(`RelayPay agent listening on http://${env.AGENT_HOST}:${env.AGENT_PORT}`);
   console.log('  POST /chat/completions  (Vapi custom LLM)');
-  console.log(env.VAPI_WEBHOOK_SECRET ? '  POST /vapi/events       (Vapi webhook)' : '  /vapi/events disabled: VAPI_WEBHOOK_SECRET not set');
+  console.log(
+    env.VAPI_WEBHOOK_SECRET
+      ? '  POST /vapi/events       (Vapi webhook)'
+      : '  /vapi/events disabled: VAPI_WEBHOOK_SECRET not set',
+  );
 });

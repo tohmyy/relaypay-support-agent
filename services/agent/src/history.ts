@@ -25,7 +25,10 @@ export async function ensureConversation(db: SupabaseClient, conversationId: str
 }
 
 /** Reads the last turns of a call, oldest first, and whether a handoff already happened. */
-export async function loadHistory(db: SupabaseClient, conversationId: string): Promise<LoadedHistory> {
+export async function loadHistory(
+  db: SupabaseClient,
+  conversationId: string,
+): Promise<LoadedHistory> {
   const { data, error } = await db
     .from('conversation_turns')
     .select('turn_number, user_transcript, assistant_response')
@@ -60,6 +63,9 @@ export async function saveTurn(
     confidenceNote?: string;
     /** True only when create_escalation actually succeeded this turn. */
     escalationCreated?: boolean;
+    /** Wall-clock time to produce the reply, and the SDK's cost estimate for it. */
+    latencyMs?: number;
+    costUsd?: number;
   },
 ) {
   const { error } = await db.from('conversation_turns').insert({
@@ -69,6 +75,8 @@ export async function saveTurn(
     assistant_response: t.response,
     answer_type: t.answerType,
     confidence_note: t.confidenceNote ?? null,
+    latency_ms: t.latencyMs ?? null,
+    cost_usd: t.costUsd ?? null,
   });
   fail('save turn', error);
   if (t.escalationCreated) {

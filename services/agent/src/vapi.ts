@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ensureConversation } from './history';
+import { callEndedMetadata, recordError } from './observability';
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const MAX_SUMMARY_CHARS = 1000;
@@ -24,7 +25,9 @@ function contentText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .map((p) => (p && typeof p === 'object' && 'text' in p ? String((p as { text: unknown }).text) : ''))
+      .map((p) =>
+        p && typeof p === 'object' && 'text' in p ? String((p as { text: unknown }).text) : '',
+      )
       .join('');
   }
   return '';
@@ -55,7 +58,8 @@ export function resolveConversationId(input: {
   call?: CallInfo | null;
   header?: string | string[];
 }): string | undefined {
-  const fromMetadata = clean(input.metadata?.conversation_id) ?? clean(input.call?.metadata?.conversation_id);
+  const fromMetadata =
+    clean(input.metadata?.conversation_id) ?? clean(input.call?.metadata?.conversation_id);
   if (fromMetadata) return fromMetadata;
   const callId = clean(input.call?.id);
   if (callId) return `vapi_${callId}`.slice(0, 64);
@@ -80,7 +84,11 @@ export function completionJson(id: string, content: string) {
   };
 }
 
-export function sseChunk(id: string, delta: { role?: 'assistant'; content?: string }, finish?: 'stop') {
+export function sseChunk(
+  id: string,
+  delta: { role?: 'assistant'; content?: string },
+  finish?: 'stop',
+) {
   const payload = {
     id,
     object: 'chat.completion.chunk',
@@ -106,7 +114,10 @@ export interface VapiEventResult {
  * `ended_at`, a final status (an escalated call stays escalated) and Vapi's summary when present.
  * Unknown message types are acknowledged and ignored.
  */
-export async function handleVapiEvent(db: SupabaseClient, payload: unknown): Promise<VapiEventResult> {
+export async function handleVapiEvent(
+  db: SupabaseClient,
+  payload: unknown,
+): Promise<VapiEventResult> {
   const message = (payload as { message?: Record<string, unknown> } | null)?.message;
   if (!message || typeof message.type !== 'string') return { handled: false };
 
@@ -114,6 +125,19 @@ export async function handleVapiEvent(db: SupabaseClient, payload: unknown): Pro
   const conversationId = resolveConversationId({ call });
   if (!conversationId) return { handled: false };
 
+  try {
+    return await handleResolved(db, message, conversationId);
+  } catch (error) {
+    await recordError(db, conversationId, 'vapi.webhook', error);
+    throw error;
+  }
+}
+
+async function handleResolved(
+  db: SupabaseClient,
+  message: Record<string, unknown>,
+  conversationId: string,
+): Promise<VapiEventResult> {
   if (message.type === 'status-update') {
     if (message.status === 'in-progress') await ensureConversation(db, conversationId);
     return { handled: true, conversationId };
@@ -128,13 +152,31 @@ export async function handleVapiEvent(db: SupabaseClient, payload: unknown): Pro
     if (conv.error) throw new Error(`load conversation: ${conv.error.message}`);
     if (turns.error) throw new Error(`load turns: ${turns.error.message}`);
     const existing = conv.data?.[0]?.final_status as string | null | undefined;
-    const finalStatus = existing === 'escalated' ? 'escalated' : (turns.data ?? []).length > 0 ? 'resolved' : 'abandoned';
-    const summary = typeof message.summary === 'string' ? message.summary.slice(0, MAX_SUMMARY_CHARS) : undefined;
+    const finalStatus =
+      existing === 'escalated'
+        ? 'escalated'
+        : (turns.data ?? []).length > 0
+          ? 'resolved'
+          : 'abandoned';
+    const summary =
+      typeof message.summary === 'string' ? message.summary.slice(0, MAX_SUMMARY_CHARS) : undefined;
     const { error } = await db
       .from('conversations')
-      .update({ ended_at: new Date().toISOString(), final_status: finalStatus, ...(summary ? { summary } : {}) })
+      .update({
+        ended_at: new Date().toISOString(),
+        final_status: finalStatus,
+        ...(summary ? { summary } : {}),
+      })
       .eq('conversation_id', conversationId);
     if (error) throw new Error(`end conversation: ${error.message}`);
+    // How the call ended: whitelisted fields only, nothing from the transcript.
+    const ended = await db.from('conversation_events').insert({
+      conversation_id: conversationId,
+      event_type: 'call_ended',
+      summary: `call ended (${finalStatus})`,
+      metadata: callEndedMetadata(message),
+    });
+    if (ended.error) throw new Error(`record call end: ${ended.error.message}`);
     return { handled: true, conversationId, finalStatus };
   }
 
