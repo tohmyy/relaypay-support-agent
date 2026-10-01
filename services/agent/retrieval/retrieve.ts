@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../src/supabase';
 import { buildQuery } from './query';
+import { errorMessage, logEvent } from '../src/logger';
+import { redactPii } from '../src/redact';
 
 export interface KbResult {
   documentId: string;
@@ -59,15 +61,22 @@ async function logRetrieval(
   try {
     const { error } = await db.from('retrieval_logs').insert({
       conversation_id: r.conversationId ?? null,
-      query: r.query,
+      query: redactPii(r.query),
       kb_chunks: r.chunks.map((c) => ({ document_id: c.documentId, score: c.score })),
       source_titles: r.sourceTitles,
       source_summary: r.chunks.length
         ? `${r.chunks.length} chunk(s): ${r.sourceTitles.join('; ')}`
         : 'no relevant knowledge found',
     });
-    if (error) console.error(`retrieval log failed: ${error.message}`);
+    if (error)
+      logEvent('warn', 'retrieval log failed', {
+        conversation_id: r.conversationId,
+        message: error.message,
+      });
   } catch (error) {
-    console.error(`retrieval log failed: ${(error as Error).message}`);
+    logEvent('warn', 'retrieval log failed', {
+      conversation_id: r.conversationId,
+      message: errorMessage(error),
+    });
   }
 }
