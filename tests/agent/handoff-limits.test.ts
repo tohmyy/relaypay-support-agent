@@ -486,7 +486,10 @@ describe('configuration and reasons', () => {
     MCP_SERVER_AUTH_TOKEN: 'k',
   };
 
+  afterEach(() => vi.unstubAllEnvs());
+
   it('defaults to conservative limits with handoff off', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     const cfg = sessionConfigFromEnv(parseEnv(base));
     expect(cfg.humanHandoff).toBe(false);
     expect(cfg.limits).toEqual({
@@ -501,7 +504,14 @@ describe('configuration and reasons', () => {
     });
   });
 
+  it('turns session creation rate limits off outside production', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const cfg = sessionConfigFromEnv(parseEnv(base));
+    expect(cfg.limits).toMatchObject({ sessionRateMax: 0, globalSessionRateMax: 0 });
+  });
+
   it('reads overrides, treats blanks as defaults and 0 as off', () => {
+    vi.stubEnv('NODE_ENV', 'production');
     const cfg = sessionConfigFromEnv(
       parseEnv({
         ...base,

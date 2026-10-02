@@ -55,6 +55,7 @@ beforeEach(() => {
   h.restInsert.mockResolvedValue(undefined);
   h.restPatch.mockResolvedValue([{ conversation_id: 'vapi_new' }]);
   vi.stubEnv('SESSION_SECRET', 's'.repeat(40));
+  vi.stubEnv('NODE_ENV', 'production');
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -114,6 +115,13 @@ describe('POST /api/support/link limits', () => {
     expect((await post()).status).toBe(200);
     vi.unstubAllEnvs();
     vi.stubEnv('SESSION_SECRET', 's'.repeat(40));
+    vi.stubEnv('NODE_ENV', 'production');
+  });
+
+  it('skips session creation rate limits outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    reads({ recent: Array.from({ length: 10 }, (_, i) => ({ conversation_id: `c${i}` })) });
+    expect((await post()).status).toBe(200);
   });
 
   it('does not fail the link because a limit check failed', async () => {
@@ -142,6 +150,12 @@ describe('shared rate limiter', () => {
 
     h.restRpc.mockResolvedValue([{ allowed: false, hits: 31, retry_after_seconds: 42 }]);
     expect(await rateLimit('k', { windowSeconds: 60, max: 30 })).toEqual({ allowed: false, retryAfterSeconds: 42, shared: true });
+  });
+
+  it('allows every request without touching the store outside production', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    expect(await rateLimit('k', { windowSeconds: 60, max: 1 })).toEqual({ allowed: true, retryAfterSeconds: 0, shared: true });
+    expect(h.restRpc).not.toHaveBeenCalled();
   });
 
   it('fails open, and says it is not the shared answer, when the store cannot be reached', async () => {

@@ -145,21 +145,29 @@ describe('human chat access rules', () => {
 
 describe('web abuse limits', () => {
   it('reads the same variables as the agent, with the same defaults and 0 = off', () => {
-    expect(abuseLimitsFromEnv({})).toEqual({
+    expect(abuseLimitsFromEnv({ NODE_ENV: 'production' })).toEqual({
       maxConcurrentSessions: 1,
       sessionRateMax: 8,
       sessionRateWindowSeconds: 3600,
       sessionMaxSeconds: 360,
     });
-    expect(abuseLimitsFromEnv({ MAX_CONCURRENT_SESSIONS: '0', SESSION_RATE_MAX: '3', SESSION_RATE_WINDOW_SECONDS: '' })).toMatchObject({
+    expect(
+      abuseLimitsFromEnv({
+        NODE_ENV: 'production',
+        MAX_CONCURRENT_SESSIONS: '0',
+        SESSION_RATE_MAX: '3',
+        SESSION_RATE_WINDOW_SECONDS: '',
+      }),
+    ).toMatchObject({
       maxConcurrentSessions: 0,
       sessionRateMax: 3,
       sessionRateWindowSeconds: 3600,
     });
-    expect(abuseLimitsFromEnv({ SESSION_RATE_MAX: 'lots', MAX_CONCURRENT_SESSIONS: '-1' })).toMatchObject({
+    expect(abuseLimitsFromEnv({ NODE_ENV: 'production', SESSION_RATE_MAX: 'lots', MAX_CONCURRENT_SESSIONS: '-1' })).toMatchObject({
       sessionRateMax: 8,
       maxConcurrentSessions: 1,
     });
+    expect(abuseLimitsFromEnv({ NODE_ENV: 'development' }).sessionRateMax).toBe(0);
   });
 
   it('only counts earlier sessions that are still live', () => {
