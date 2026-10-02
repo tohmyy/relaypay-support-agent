@@ -181,8 +181,16 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     const id = `chatcmpl-${randomUUID()}`;
     if (body.stream !== true) {
       const answered = await answer(conversationId, userMessage, callId, timer, progress);
-      timer.set('first_write_ms', timer.elapsed());
-      sendJson(res, 200, completionJson(id, answered.text));
+      // The customer may have talked over the assistant while the turn ran: there is nobody to answer.
+      if (res.destroyed) {
+        timer.set('client_closed_ms', timer.elapsed());
+        timer.set('delivered', false);
+        opts.session?.replyNotDelivered(conversationId);
+      } else {
+        timer.set('first_write_ms', timer.elapsed());
+        timer.set('delivered', true);
+        sendJson(res, 200, completionJson(id, answered.text));
+      }
       persistTimings(conversationId, answered, timer);
       return;
     }
@@ -203,7 +211,10 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     write(sseChunk(id, { role: 'assistant' }));
     // Stay audible on slow turns. The acknowledgement fits what the turn is doing, comes from a fixed library, is
     // transport only and is never stored as the answer.
+    let closedEarly = false;
     const ackTimer = setTimeout(() => {
+      // Nobody is listening any more: do not speak, advance the phrase rotation or record an acknowledgement.
+      if (closedEarly) return;
       const category = chooseAckCategory(progress, userMessage);
       // One instant for both: when the acknowledgement is the first thing written, it *is* the first write.
       const at = timer.elapsed();
@@ -211,8 +222,17 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       timer.set('ack_category', category);
       speak(acks.pick(conversationId, category), at);
     }, fillerAfter);
+    // The response closing before it finished means the connection dropped (for example the customer interrupted).
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      closedEarly = true;
+      clearTimeout(ackTimer);
+      timer.set('client_closed_ms', timer.elapsed());
+    });
     const answered = await answer(conversationId, userMessage, callId, timer, progress);
     clearTimeout(ackTimer);
+    timer.set('delivered', !closedEarly);
+    if (closedEarly) opts.session?.replyNotDelivered(conversationId);
     speak(answered.text);
     write(sseChunk(id, {}, 'stop'));
     write(SSE_DONE);

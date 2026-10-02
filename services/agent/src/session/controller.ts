@@ -17,6 +17,11 @@ import { type CallHandle, noopCallControl, type VapiCallControl } from './vapi-c
 const SILENCE_GRACE_MS = 1000;
 /** If the goodbye's speech-end event never arrives, still end the call. */
 const PENDING_END_FALLBACK_MS = 10_000;
+/**
+ * Customer speech shorter than this while the assistant was talking is more likely a cough, a keystroke or a stray
+ * word than a real interruption. Only a rough indicator: it is measured between webhook arrivals.
+ */
+const SHORT_INTERRUPT_MS = 500;
 
 export type TurnDecision =
   | { kind: 'proceed' }
@@ -43,6 +48,15 @@ interface Session {
   userSpeaking: boolean;
   /** When the webhook said the customer stopped speaking; consumed by the next turn to estimate speech_to_agent_ms. */
   userStoppedAt?: number;
+  /** Customer speech that started while the assistant was speaking, how many were very short, and replies never heard. */
+  interruptions: number;
+  shortInterruptions: number;
+  undeliveredReplies: number;
+  silenceWarnings: number;
+  /** When the current interruption began (cleared when the customer stops). */
+  interruptStartedAt?: number;
+  /** The once-per-call voice_stats event has been written (or must not be, for a session rebuilt after a restart). */
+  statsRecorded: boolean;
   pendingEnd?: { reason: ConversationEndReason; sawSpeech: boolean };
   silenceTimer?: ReturnType<typeof setTimeout>;
   countdownTimer?: ReturnType<typeof setTimeout>;
@@ -120,6 +134,7 @@ export class SessionController {
         s.ended = true;
         s.phase = 'ended';
         this.clearTimers(s);
+        await this.recordVoiceStats(s);
       }
     }
   }
@@ -138,6 +153,15 @@ export class SessionController {
         const decision = await this.reply(s, input.userMessage, SESSION_TEXT.timeout);
         await this.end(s, 'session-timeout');
         return decision;
+      }
+
+      // The customer is still talking after "that's all": the goodbye no longer ends the call. If what they say is
+      // another closer it is classified below and the call ends then. Mere noise sends no turn, so it cancels nothing.
+      if (s.pendingEnd) {
+        s.pendingEnd = undefined;
+        if (s.pendingEndTimer) clearTimeout(s.pendingEndTimer);
+        s.pendingEndTimer = undefined;
+        if (s.phase === 'ending') s.phase = 'active';
       }
 
       this.cancelSilence(s);
@@ -180,6 +204,19 @@ export class SessionController {
     s.turnInFlight = false;
     s.formPending = result?.answerType === 'escalation' && !result.escalated;
     // The reply is about to be spoken; the assistant-stopped event restarts the silence timer.
+  }
+
+  /**
+   * The customer's connection dropped before the reply reached Vapi, which is what happens when they talk over the
+   * assistant mid-turn (assuming Vapi closes the request; docs/VAPI.md). The turn itself still completed and was
+   * saved. Nothing will be spoken, so no assistant-stopped event will restart silence detection: do it here.
+   */
+  replyNotDelivered(conversationId: string) {
+    const s = this.sessions.get(conversationId);
+    if (!s || s.ended) return;
+    s.undeliveredReplies += 1;
+    s.turnInFlight = false;
+    this.armSilence(s);
   }
 
   // --- internals ---
@@ -249,6 +286,12 @@ export class SessionController {
       formPending: false,
       assistantSpeaking: false,
       userSpeaking: false,
+      interruptions: 0,
+      shortInterruptions: 0,
+      undeliveredReplies: 0,
+      silenceWarnings: 0,
+      // A session rebuilt after a restart has lost its counts; writing zeros would pass off a gap as "no interruptions".
+      statsRecorded: alreadyEnded,
     };
     this.sessions.set(conversationId, s);
     if (!alreadyEnded) {
@@ -289,8 +332,20 @@ export class SessionController {
         return;
       }
     } else {
+      const now = Date.now();
+      // The customer began while the assistant was still talking (and was not already counted as talking).
+      if (started && s.assistantSpeaking && !s.userSpeaking) {
+        s.interruptions += 1;
+        s.interruptStartedAt = now;
+      }
       s.userSpeaking = started;
-      if (!started) s.userStoppedAt = Date.now();
+      if (!started) {
+        s.userStoppedAt = now;
+        if (s.interruptStartedAt !== undefined) {
+          if (now - s.interruptStartedAt < SHORT_INTERRUPT_MS) s.shortInterruptions += 1;
+          s.interruptStartedAt = undefined;
+        }
+      }
     }
     if (started) this.cancelSilence(s);
     else this.armSilence(s);
@@ -327,6 +382,7 @@ export class SessionController {
     if (!this.canMeasureSilence(s)) return;
     s.resumePhase = s.phase === 'awaiting-confirmation' ? 'awaiting-confirmation' : 'active';
     s.phase = 'silence-warning';
+    s.silenceWarnings += 1;
     s.countdownTimer = unref(
       setTimeout(
         () => void this.end(s, 'silence-timeout'),
@@ -354,6 +410,7 @@ export class SessionController {
       });
     }
     s.phase = 'ended';
+    await this.recordVoiceStats(s);
     try {
       const spoke = opts.speak
         ? await this.control.say(s.call, SESSION_TEXT.timeout, { endAfter: true })
@@ -365,6 +422,18 @@ export class SessionController {
         message: errorMessage(error),
       });
     }
+  }
+
+  /** One row per call with the voice-interaction counts; written once, by whichever end happens first. */
+  private async recordVoiceStats(s: Session) {
+    if (s.statsRecorded) return;
+    s.statsRecorded = true;
+    await this.logEvent(s, 'voice_stats', 'voice interaction summary', {
+      interruptions: s.interruptions,
+      short_interruptions: s.shortInterruptions,
+      undelivered_replies: s.undeliveredReplies,
+      silence_warnings: s.silenceWarnings,
+    });
   }
 
   private clearTimers(s: Session) {

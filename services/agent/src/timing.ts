@@ -33,6 +33,10 @@ export interface TurnTimings {
   /** Customer stopped speaking (webhook arrival) to request received. Approximate: it includes webhook delay. */
   speech_to_agent_ms?: number;
   prewarmed?: boolean;
+  /** False when the customer's connection closed before the reply reached Vapi (they talked over the assistant). */
+  delivered?: boolean;
+  /** Request received to the connection closing, when it closed early. */
+  client_closed_ms?: number;
 }
 
 export class TurnTimer {
