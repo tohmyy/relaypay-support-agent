@@ -63,6 +63,9 @@ to a REST `DELETE /call/{id}` with `VAPI_API_KEY`.
 
 **It works on live web calls.** Three silence timeouts and one 360-second session timeout were each followed by Vapi ending
 the call within seconds, after the `session_ended` row was written, with `endedReason: assistant-ended-call-after-message-spoken`.
+The same hang-up is used for the **human handoff** (`docs/HANDOFF.md`): after an escalation for a signed-in customer the
+controller waits for the confirmation to finish playing, marks the conversation `support_mode = human`, and ends the call.
+The end-of-call report that follows does not close the conversation, because `endConversation` skips human conversations.
 Which of the two routes did it is not recorded. If a hang-up ever fails, the session is still marked ended in the database,
 further turns are refused, and Vapi's `maxDurationSeconds` or the browser ends the call.
 

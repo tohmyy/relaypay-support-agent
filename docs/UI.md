@@ -104,6 +104,14 @@ dashboard): the console itself is not turned into a dashboard, and the dashboard
 signed-in customer. Customer wording lives in `lib/shell-copy.ts` (`SHELL_COPY`, held to the same vocabulary rule as
 `COPY`); staff wording is kept in `STAFF_COPY` in the same file. See `docs/AUTH.md`.
 
+### Text chat with a specialist
+
+After a handoff the customer's `/support` page (and, on any later visit, `/support` or the dashboard banner) shows
+`HumanSupport`: a structured transcript (not chat bubbles), the specialist's name and title, a polite typing line, and a
+labelled message box (Enter sends, Shift+Enter makes a new line). It takes no focus and has no landmark of its own, so it
+can sit in a page or a future widget. Staff use `StaffChat` on the conversation page. Customer wording is in `SHELL_COPY.human`,
+staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
+
 ## Known limits
 
 - The live microphone path (real Vapi call from the browser) has not been exercised in automation; it needs a person.

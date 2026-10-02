@@ -7,6 +7,8 @@ Supabase Postgres. Migrations are plain SQL in `supabase/migrations/` and are ap
 | `..._seed_tables.sql` | `customers`, `transactions`, `payouts` (text business keys are unique FK targets) |
 | `..._runtime_tables.sql` | `conversations`, `conversation_turns`, `retrieval_logs`, `tool_calls`, `support_tickets`, `escalations`, `evaluations` |
 | `..._app_users.sql` | `app_users` (sign-in accounts: email, scrypt hash, role, optional `customer_id`, display name, title, avatar, disabled flag) and `conversations.customer_id` / `user_id` (nullable; set when a signed-in customer's call is linked) |
+| `..._human_handoff.sql` | `conversations.support_mode` (`ai`/`human`/`ended`), `assigned_staff_id`, `staff_typing_at`, `customer_typing_at`; `conversation_turns.sender` (`customer`/`ai`/`staff`/`system`; null = a voice-era pair), `body`, `staff_user_id` (one message per row, `turn_number` null, ordered by `created_at`) |
+| `..._abuse_limits.sql` | `limit-reached` added to the `end_reason` check; `rate_limits` counters and the `rate_limit_hit` / `rate_limit_reset` functions the web app uses (service role only) |
 | `..._indexes_and_access.sql` | lookup indexes; RLS enabled on all tables with no policies; `anon`/`authenticated` revoked |
 
 - `conversation_events` (an 11th table, added in Phase 5) stores events from the MCP `log_conversation_event` tool.

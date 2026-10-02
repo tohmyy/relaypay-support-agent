@@ -2668,14 +2668,14 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 ## Human Support
 
 - [x] Escalation records via MCP `create_escalation` (Mode A)
-- [ ] AI stops after handoff (Mode B)
-- [~] Conversation remains active as DB row (Mode A escalated; Mode B human thread not built)
-- [ ] Staff workspace
-- [ ] Staff messaging
-- [ ] Realtime updates
-- [ ] Staff profile/avatar
-- [ ] Typing indicator
-- [ ] Staff conversation closure
+- [~] AI stops after handoff (Mode B; `HUMAN_HANDOFF=1`, signed-in customers only; built and tested offline, the live end-to-end check is still to do: `docs/HANDOFF.md`)
+- [x] Conversation remains active as DB row (`support_mode = human`)
+- [x] Staff workspace (queue, conversation page, claim, reply, close)
+- [x] Staff messaging
+- [~] Realtime updates (polling every 2 s through authorised routes, by design; no Supabase Realtime)
+- [~] Staff profile/avatar (name, title and avatar URL shown; no avatar upload)
+- [x] Typing indicator (both directions, 5 s window)
+- [x] Staff conversation closure (`end_reason = human-closed`)
 
 ## Authentication — beyond PRD minimum
 
@@ -2712,15 +2712,15 @@ Built self-contained (`docs/AUTH.md`): own `app_users` table, scrypt hashes, sig
 
 ## Abuse Prevention
 
-- [ ] Session rate limiting
-- [ ] Concurrent-session limit
+- [x] Session rate limiting (per signed-in customer, plus a global breaker; anonymous callers cannot be limited per IP, see `docs/ABUSE.md`)
+- [x] Concurrent-session limit (1 active AI voice session per signed-in customer)
 - [x] 6-minute hard limit
 - [x] Silence limit
 - [ ] Gibberish limit
-- [ ] Agent-call limit (conversation-level; per-turn `maxTurns: 6` already shipped)
-- [ ] MCP-call limit
+- [x] Agent-call limit (conversation-level, on top of the per-turn `maxTurns: 6`)
+- [x] MCP-call limit (tool calls and knowledge lookups per conversation)
 - [x] Maximum execution depth per turn (`maxTurns: 6`)
-- [ ] Suspicious usage logging
+- [x] Suspicious usage logging (`limit_reached` and `human_handoff` events; `npm run report` shows them)
 - [x] Server-side Session Controller enforcement (Iteration 1; server-initiated hang-up of a live web call verified 2026-10-02, see `docs/VAPI.md`; requires the assistant to be subscribed to `speech-update`)
 
 ---

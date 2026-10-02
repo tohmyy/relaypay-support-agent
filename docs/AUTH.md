@@ -69,8 +69,9 @@ probed. An **unlinked** conversation behaves exactly as before, so the anonymous
   it is deferred.
 - The cookie is stateless: there is no server-side list of revoked sessions. This is softened because the data-access
   layer re-checks the user on every request, and the lifetime is 8 hours.
-- The failed-attempt limit is in memory, so it is per server instance and resets on restart. A shared limiter belongs
-  with the abuse-prevention work (Iteration 10).
+- Sign-in attempts are limited (5 per 15 minutes per email and address) by a counter kept in Postgres (`rate_limit_hit`,
+  `docs/ABUSE.md`), so the limit holds across server instances and restarts. If the database cannot be reached the
+  in-memory counter is used instead (per instance, reset on restart).
 - `/` is still anonymous, and the Vapi public key is still public; closing that is abuse hardening, not this round.
 - The first seconds of a signed-in call are unlinked, until the browser has the call id and the link request lands.
 - No password change or reset, no multi-factor sign-in, no avatar upload. Accounts come from `db:seed-users`.
