@@ -19,6 +19,7 @@
     "format": "prettier --write .",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/db/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env.local scripts/db/seed.ts",
+    "db:seed-users": "tsx --env-file-if-exists=.env.local scripts/db/seed-users.ts",
     "db:verify": "tsx --env-file-if-exists=.env.local scripts/db/verify.ts",
     "kb:split": "tsx scripts/kb/split.ts",
     "kb:ingest": "tsx --env-file-if-exists=.env.local scripts/kb/ingest.ts",

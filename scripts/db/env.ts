@@ -5,6 +5,7 @@ const nonEmpty = z.string().min(1);
 const schemas = {
   migrate: z.object({ SUPABASE_DB_URL: nonEmpty }),
   seed: z.object({ SUPABASE_DB_URL: nonEmpty }),
+  'seed-users': z.object({ SUPABASE_DB_URL: nonEmpty, DEMO_USER_PASSWORD: z.string().min(10).max(200) }),
   verify: z.object({
     SUPABASE_URL: z.string().url(),
     SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
