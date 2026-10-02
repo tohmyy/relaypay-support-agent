@@ -71,9 +71,9 @@ readable by its id, as before.
   it is deferred.
 - The cookie is stateless: there is no server-side list of revoked sessions. This is softened because the data-access
   layer re-checks the user on every request, and the lifetime is 8 hours.
-- Sign-in attempts are limited (5 per 15 minutes per email and address) by a counter kept in Postgres (`rate_limit_hit`,
+- Sign-in attempts are limited in production (5 per 15 minutes per email and address) by a counter kept in Postgres (`rate_limit_hit`,
   `docs/ABUSE.md`), so the limit holds across server instances and restarts. If the database cannot be reached the
-  in-memory counter is used instead (per instance, reset on restart).
+  in-memory counter is used instead (per instance, reset on restart). Outside production the limit is off.
 - The Vapi public key is still public: someone can start a call against it without going through the site, and that call
   is unlinked (so it cannot be offered the chat and only the agent's global limits apply). See `docs/ABUSE.md`.
 - The first seconds of a signed-in call are unlinked, until the browser has the call id and the link request lands.

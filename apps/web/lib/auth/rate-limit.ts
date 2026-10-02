@@ -5,6 +5,8 @@ import { restRpc } from '@/lib/supabase.server';
  * A rate limiter shared by every instance of the web app: fixed-window counters kept in Postgres by the
  * `rate_limit_hit` function (one atomic upsert, so two requests cannot both take the last slot). The in-memory
  * `LoginThrottle` cannot do this on its own because each server instance would keep a separate count.
+ *
+ * Rate limits run only in production (`NODE_ENV === 'production'`), so local development and tests are not blocked.
  */
 export interface LimitResult {
   allowed: boolean;
@@ -19,11 +21,20 @@ interface HitRow {
   retry_after_seconds: number;
 }
 
+/** Whether request / session creation rate limits are enforced. Off outside production. */
+export function rateLimitsEnabled(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
 /**
  * Counts one hit for `key`. If the store is unreachable it fails open (`allowed: true, shared: false`) so a
  * database hiccup does not stop people messaging each other; callers that want a stricter fallback check `shared`.
+ * Outside production every call is allowed without touching the store.
  */
 export async function rateLimit(key: string, opts: { windowSeconds: number; max: number }): Promise<LimitResult> {
+  if (!rateLimitsEnabled()) {
+    return { allowed: true, retryAfterSeconds: 0, shared: true };
+  }
   try {
     const rows = await restRpc<HitRow[]>('rate_limit_hit', {
       p_key: key.slice(0, 200),

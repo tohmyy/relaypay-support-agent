@@ -1,7 +1,7 @@
 /**
  * Abuse limits as the web app sees them (Build Plan V2 Iteration 10). The voice agent enforces the same limits on its
  * side from the same environment variables (docs/ABUSE.md); the web app only uses them to answer the browser quickly.
- * 0 turns a limit off.
+ * 0 turns a limit off. Session creation rate limits apply only in production (`NODE_ENV === 'production'`).
  */
 export interface WebAbuseLimits {
   maxConcurrentSessions: number;
@@ -17,10 +17,15 @@ function int(value: string | undefined, fallback: number, min: number, max: numb
   return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
+function rateLimitsOn(env: Record<string, string | undefined>): boolean {
+  return (env.NODE_ENV ?? process.env.NODE_ENV) === 'production';
+}
+
 export function abuseLimitsFromEnv(env: Record<string, string | undefined> = process.env): WebAbuseLimits {
   return {
     maxConcurrentSessions: int(env.MAX_CONCURRENT_SESSIONS, 1, 0, 20),
-    sessionRateMax: int(env.SESSION_RATE_MAX, 8, 0, 1000),
+    // Rate limits stay off in development/test so local calls are not blocked after a few tries.
+    sessionRateMax: rateLimitsOn(env) ? int(env.SESSION_RATE_MAX, 8, 0, 1000) : 0,
     sessionRateWindowSeconds: int(env.SESSION_RATE_WINDOW_SECONDS, 3600, 10, 86400),
     sessionMaxSeconds: int(env.SESSION_MAX_SECONDS, 360, 10, 86400),
   };

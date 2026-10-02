@@ -60,7 +60,7 @@ server.listen(env.AGENT_PORT, env.AGENT_HOST, () => {
     `  human handoff: ${sessionConfig.humanHandoff ? 'on (signed-in customers move to a text chat with staff after an escalation)' : 'off'}`,
   );
   console.log(
-    `  abuse limits: ${sessionConfig.limits.maxAgentCalls || 'off'} agent calls, ${sessionConfig.limits.maxToolCalls || 'off'} tool calls, ${sessionConfig.limits.maxRetrievals || 'off'} retrievals per conversation; ${sessionConfig.limits.maxConcurrentSessions || 'off'} concurrent per customer`,
+    `  abuse limits: ${sessionConfig.limits.maxAgentCalls || 'off'} agent calls, ${sessionConfig.limits.maxToolCalls || 'off'} tool calls, ${sessionConfig.limits.maxRetrievals || 'off'} retrievals per conversation; ${sessionConfig.limits.maxConcurrentSessions || 'off'} concurrent per customer; session rates ${sessionConfig.limits.sessionRateMax || sessionConfig.limits.globalSessionRateMax ? 'on' : 'off'}`,
   );
   console.log(
     `  session limits: ${sessionConfig.maxSeconds}s max, silence ${sessionConfig.silenceSeconds}s + ${sessionConfig.countdownSeconds}s countdown`,

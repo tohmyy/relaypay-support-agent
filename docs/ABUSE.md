@@ -21,6 +21,10 @@ hold a session open for ever. Every limit is enforced **on the server**; the bro
 Set any of the three budgets, the concurrency limit or a rate to `0` to turn it off (`docs/ENVIRONMENT.md`). The defaults are
 starting points: tune them after watching normal usage with `npm run report`.
 
+**Development:** request rate limits (sign-in, chat, presence, settings) and session creation rate limits (per customer and
+global) are **off** unless `NODE_ENV=production`. Conversation budgets, concurrent-session and session-length limits still
+apply.
+
 ## What happens when a limit is reached
 
 - **Over a conversation budget** (agent turns, tool calls, knowledge lookups): the customer hears a fixed line (no model call).

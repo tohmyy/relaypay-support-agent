@@ -1,6 +1,11 @@
 import type { Env } from '../env';
 import type { SessionConfig } from './types';
 
+/** Session creation rate limits (per customer and global) apply only in production. */
+function rateLimitsEnabled(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
 export function sessionConfigFromEnv(
   env: Pick<
     Env,
@@ -19,6 +24,7 @@ export function sessionConfigFromEnv(
     | 'GLOBAL_SESSION_RATE_WINDOW_SECONDS'
   >,
 ): SessionConfig {
+  const ratesOn = rateLimitsEnabled();
   return {
     maxSeconds: env.SESSION_MAX_SECONDS,
     // A warning window as long as the session itself would warn at second zero; keep it inside the limit.
@@ -31,9 +37,9 @@ export function sessionConfigFromEnv(
       maxToolCalls: env.MAX_TOOL_CALLS,
       maxRetrievals: env.MAX_RETRIEVALS,
       maxConcurrentSessions: env.MAX_CONCURRENT_SESSIONS,
-      sessionRateMax: env.SESSION_RATE_MAX,
+      sessionRateMax: ratesOn ? env.SESSION_RATE_MAX : 0,
       sessionRateWindowSeconds: env.SESSION_RATE_WINDOW_SECONDS,
-      globalSessionRateMax: env.GLOBAL_SESSION_RATE_MAX,
+      globalSessionRateMax: ratesOn ? env.GLOBAL_SESSION_RATE_MAX : 0,
       globalSessionRateWindowSeconds: env.GLOBAL_SESSION_RATE_WINDOW_SECONDS,
     },
   };

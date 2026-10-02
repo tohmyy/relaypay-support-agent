@@ -22,8 +22,8 @@ Missing or invalid variables are reported by name only, never by value.
 | `HUMAN_HANDOFF` | agent | no | `1` moves a signed-in customer to a text chat with staff after an escalation (the call is hung up; `docs/HANDOFF.md`). **Default off** |
 | `MAX_AGENT_CALLS`, `MAX_TOOL_CALLS`, `MAX_RETRIEVALS` | agent | no | Per-conversation budgets (defaults 30, 50, 30). 0 turns one off. See `docs/ABUSE.md` |
 | `MAX_CONCURRENT_SESSIONS` | agent, web server | no | Active AI voice sessions per signed-in customer (default 1; 0 = off) |
-| `SESSION_RATE_MAX`, `SESSION_RATE_WINDOW_SECONDS` | agent, web server | no | New conversations per signed-in customer per window (defaults 8 per 3600 s; 0 = off) |
-| `GLOBAL_SESSION_RATE_MAX`, `GLOBAL_SESSION_RATE_WINDOW_SECONDS` | agent | no | New conversations by anyone per window, a circuit breaker (defaults 60 per 600 s; 0 = off) |
+| `SESSION_RATE_MAX`, `SESSION_RATE_WINDOW_SECONDS` | agent, web server | no | New conversations per signed-in customer per window (defaults 8 per 3600 s; 0 = off). Enforced only when `NODE_ENV=production` |
+| `GLOBAL_SESSION_RATE_MAX`, `GLOBAL_SESSION_RATE_WINDOW_SECONDS` | agent | no | New conversations by anyone per window, a circuit breaker (defaults 60 per 600 s; 0 = off). Enforced only when `NODE_ENV=production` |
 | `ACK_AFTER_MS` | agent | no | Milliseconds before a slow reply gets a spoken acknowledgement. Default 2500 (200 to 30000) |
 | `AGENT_PREWARM` | agent | no | `1` keeps an agent process started per live call. **Default off**; compare first (`docs/PERFORMANCE.md`) |
 | `PREWARM_MAX`, `PREWARM_TTL_SECONDS` | agent | no | Most warm processes at once (default 8) and how long an unused one lives (default 90) |

@@ -136,7 +136,7 @@ request for a human conversation gets a fixed line (`SESSION_TEXT.humanActive`),
 | `GET/POST /api/staff/presence` | staff | the switch, and the heartbeat |
 | `GET/PUT /api/staff/settings/contact-methods` | administrators only | read and save which methods are on (at least one must stay on; 10 changes a minute) |
 
-Messages are limited to 2,000 characters and rate limited through the shared limiter (`docs/ABUSE.md`). Every write is
+Messages are limited to 2,000 characters and rate limited through the shared limiter in production (`docs/ABUSE.md`). Every write is
 conditional on the conversation still being open, so nothing is stored in a conversation that was closed a moment earlier.
 
 ## Roles

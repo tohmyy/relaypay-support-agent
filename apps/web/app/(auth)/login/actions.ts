@@ -50,10 +50,12 @@ export async function login(_previous: LoginState, formData: FormData): Promise<
 
   const key = LoginThrottle.key(email, await clientAddress());
   // The shared limiter (Postgres) holds across instances and restarts; the in-memory one is the fallback when the
-  // shared store cannot be reached, and a second guard otherwise.
+  // shared store cannot be reached, and a second guard otherwise. Both are off outside production.
   const shared = await rateLimit(`login:${key}`, LOGIN_ATTEMPTS);
   if (!shared.allowed) return { error: SHELL_COPY.signIn.tooMany };
-  if (!shared.shared && loginThrottle.retryAfterMs(key) > 0) return { error: SHELL_COPY.signIn.tooMany };
+  if (process.env.NODE_ENV === 'production' && !shared.shared && loginThrottle.retryAfterMs(key) > 0) {
+    return { error: SHELL_COPY.signIn.tooMany };
+  }
 
   let user: LoginRow | undefined;
   try {
