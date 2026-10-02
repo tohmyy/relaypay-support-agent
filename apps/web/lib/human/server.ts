@@ -32,6 +32,29 @@ export async function touchOpenHuman(
   return rows.length > 0;
 }
 
+/** Records that one side has read the conversation up to now. Only for a conversation that is with a person. */
+export async function markRead(conversationId: string, side: 'customer' | 'staff'): Promise<void> {
+  await restPatch(
+    'conversations',
+    `conversation_id=${eq(conversationId)}&support_mode=in.(human,ended)`,
+    { [side === 'customer' ? 'customer_last_read_at' : 'staff_last_read_at']: new Date().toISOString() },
+  );
+}
+
+/** Ends a chat that is still open (conditional, so only one request can end it). True if this call ended it. */
+export async function endOpenChat(conversationId: string, endReason: 'user-ended' | 'human-closed'): Promise<boolean> {
+  const now = new Date().toISOString();
+  const closed = await restPatch('conversations', openHuman(conversationId), {
+    support_mode: 'ended',
+    ended_at: now,
+    end_reason: endReason,
+    last_activity_at: now,
+    staff_typing_at: null,
+    customer_typing_at: null,
+  });
+  return closed.length > 0;
+}
+
 export type ClaimOutcome = 'claimed' | 'already-mine' | 'taken' | 'not-open';
 
 /**

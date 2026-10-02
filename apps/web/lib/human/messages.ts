@@ -23,6 +23,8 @@ export interface HumanMessage {
   body: string;
   /** ISO time the message was stored. */
   at: string;
+  /** The id the sender's browser gave it before sending, so a retry is recognised; null for older messages. */
+  clientId: string | null;
   /** Who wrote a staff message. */
   author: MessageAuthor | null;
 }
@@ -33,6 +35,7 @@ export interface MessageRow {
   body: string | null;
   staff_user_id: string | null;
   created_at: string | null;
+  client_msg_id?: string | null;
 }
 
 export type CleanResult = { ok: true; body: string } | { ok: false; error: 'empty' | 'too-long' | 'invalid' };
@@ -62,6 +65,7 @@ export function toMessages(rows: MessageRow[], authors: Map<string, MessageAutho
       sender: r.sender as MessageSender,
       body: r.body as string,
       at: new Date(r.created_at as string).toISOString(),
+      clientId: r.client_msg_id ?? null,
       author: r.sender === 'staff' && r.staff_user_id ? (authors.get(r.staff_user_id) ?? null) : null,
     }));
 }
@@ -87,4 +91,36 @@ export function parseCursor(value: string | null | undefined): string | null {
   if (!value) return null;
   const t = Date.parse(value);
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID.test(value);
+}
+
+/**
+ * The newest message by `own` that the other side has already looked at (the one that gets the "Seen" mark), given when
+ * they last read the conversation. Null when none has been seen.
+ */
+export function lastSeenMessageId(
+  messages: HumanMessage[],
+  own: MessageSender,
+  otherReadAt: string | null | undefined,
+): string | null {
+  const read = Date.parse(otherReadAt ?? '');
+  if (!Number.isFinite(read)) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.sender === own && Date.parse(m.at) <= read) return m.id;
+  }
+  return null;
+}
+
+/** Whether the other side has written something newer than the last time this side looked. */
+export function hasUnread(lastOtherMessageAt: string | null | undefined, myLastReadAt: string | null | undefined): boolean {
+  const written = Date.parse(lastOtherMessageAt ?? '');
+  if (!Number.isFinite(written)) return false;
+  const read = Date.parse(myLastReadAt ?? '');
+  return !Number.isFinite(read) || written > read;
 }

@@ -23,8 +23,16 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const claims = claimsFrom(request);
 
+  // The site has no public page: signed-out visitors go to sign-in, signed-in ones to their own area.
+  if (pathname === '/') {
+    return NextResponse.redirect(new URL(claims ? homeFor(claims.role) : '/login', request.url));
+  }
+
   if (pathname === '/login') {
-    return claims ? NextResponse.redirect(new URL(homeFor(claims.role), request.url)) : NextResponse.next();
+    // A cookie that looks fine here can still be refused by the real check (the account was disabled, its role changed).
+    // Those redirects carry `next` or `signedout`, and must be allowed to reach the form, or the two would bounce for ever.
+    const refused = request.nextUrl.searchParams.has('next') || request.nextUrl.searchParams.has('signedout');
+    return claims && !refused ? NextResponse.redirect(new URL(homeFor(claims.role), request.url)) : NextResponse.next();
   }
 
   if (!claims) {
@@ -41,5 +49,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/login', '/dashboard', '/payments', '/payouts', '/invoices', '/support/:path*', '/settings', '/staff/:path*'],
+  matcher: ['/', '/login', '/dashboard', '/payments', '/payouts', '/invoices', '/support/:path*', '/settings', '/staff/:path*'],
 };

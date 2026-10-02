@@ -15,6 +15,8 @@ export interface CurrentUser {
   displayName: string;
   title: string | null;
   avatarUrl: string | null;
+  /** Staff only: switched on "available for chats". */
+  available: boolean;
 }
 
 interface UserRow {
@@ -26,9 +28,10 @@ interface UserRow {
   title: string | null;
   avatar_url: string | null;
   disabled: boolean;
+  available?: boolean | null;
 }
 
-const USER_COLUMNS = 'id,email,role,customer_id,display_name,title,avatar_url,disabled';
+const USER_COLUMNS = 'id,email,role,customer_id,display_name,title,avatar_url,disabled,available';
 
 /**
  * The current user, or null. The cookie only proves who signed in earlier; this re-reads the user so that disabling
@@ -56,13 +59,16 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     displayName: row.display_name,
     title: row.title,
     avatarUrl: row.avatar_url,
+    available: Boolean(row.available),
   };
 });
 
 /** For pages, route handlers and actions that need a signed-in user: sends everyone else to the login page. */
 export async function requireUser(returnTo?: string): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) redirect(returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : '/login');
+  // Always say why: the proxy sends a signed-in cookie holder away from /login, except when the real check just refused
+  // them (a disabled account, a changed role). Without this marker that would bounce between the two for ever.
+  if (!user) redirect(returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : '/login?signedout=1');
   return user;
 }
 

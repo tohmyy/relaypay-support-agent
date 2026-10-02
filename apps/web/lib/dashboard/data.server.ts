@@ -1,4 +1,5 @@
 import 'server-only';
+import { onlineCutoff } from '@/lib/human/presence';
 import { restSelect } from '@/lib/supabase.server';
 import {
   CONVERSATION_COLUMNS,
@@ -73,12 +74,16 @@ export interface AccessRow {
   assigned_staff_id: string | null;
   staff_typing_at: string | null;
   customer_typing_at: string | null;
+  customer_last_read_at: string | null;
+  staff_last_read_at: string | null;
+  handoff_at: string | null;
+  last_customer_message_at: string | null;
 }
 
 export async function getConversation(conversationId: string): Promise<AccessRow | null> {
   const [row] = await restSelect<AccessRow>(
     'conversations',
-    `select=${QUEUE_CONVERSATION_COLUMNS},staff_typing_at,customer_typing_at&conversation_id=${eq(conversationId)}&limit=1`,
+    `select=${QUEUE_CONVERSATION_COLUMNS},staff_typing_at,customer_typing_at,customer_last_read_at&conversation_id=${eq(conversationId)}&limit=1`,
   );
   return row ?? null;
 }
@@ -114,7 +119,7 @@ export async function getHumanMessages(conversationId: string, after?: string | 
   const since = parseCursor(after);
   const rows = await restSelect<MessageRow>(
     'conversation_turns',
-    `select=id,sender,body,staff_user_id,created_at&conversation_id=${eq(conversationId)}&sender=not.is.null` +
+    `select=id,sender,body,staff_user_id,created_at,client_msg_id&conversation_id=${eq(conversationId)}&sender=not.is.null` +
       `${since ? `&created_at=gte.${encodeURIComponent(since)}` : ''}&order=created_at.asc&limit=200`,
   );
   const authors = await getStaffProfiles(rows.map((r) => r.staff_user_id ?? ''));
@@ -191,4 +196,14 @@ export async function getStaffCustomer(customerId: string): Promise<(CustomerPro
     `select=customer_id,company_name,contact_name,contact_email,plan&customer_id=${eq(customerId)}&limit=1`,
   );
   return row ?? null;
+}
+
+/** Whether any member of staff is online right now (available, and seen within the last 90 seconds). */
+export async function isAnyStaffOnline(): Promise<boolean> {
+  const rows = await restSelect<{ id: string }>(
+    'app_users',
+    `select=id&role=in.(support_agent,support_admin)&available=eq.true&disabled=eq.false` +
+      `&last_seen_at=gte.${encodeURIComponent(onlineCutoff())}&limit=1`,
+  );
+  return rows.length > 0;
 }

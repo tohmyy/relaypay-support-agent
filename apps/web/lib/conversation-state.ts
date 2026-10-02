@@ -25,6 +25,8 @@ export interface PublicConversationState {
   ended: boolean;
   /** Why the session ended, once it has. */
   endReason: PublicEndReason | null;
+  /** How the customer chose to be helped when offered a choice, once an escalation exists (null otherwise). */
+  escalationChannel: 'text_chat' | 'callback' | null;
   /** `human` once the conversation has moved to a support specialist (the voice call is over, the conversation is not). */
   supportMode: SupportMode;
   /** When the session started and the server's clock at read time (ISO), so the UI can render the time limit. */
@@ -44,6 +46,7 @@ export const NEUTRAL_STATE: PublicConversationState = {
   escalation: null,
   ended: false,
   endReason: null,
+  escalationChannel: null,
   supportMode: 'ai',
   startedAt: null,
   serverTime: null,
@@ -53,7 +56,7 @@ export const NEUTRAL_STATE: PublicConversationState = {
 export interface ConversationRows {
   turns: { turn_number: number | null; answer_type: string | null }[];
   tickets: { ticket_id: string | null; created_at?: string | null }[];
-  escalations: { preferred_time: string | null }[];
+  escalations: { preferred_time: string | null; contact_preference?: string | null }[];
   conversation: {
     ended_at: string | null;
     end_reason?: string | null;
@@ -92,6 +95,7 @@ export function toPublicState(
     escalation: escalation ? { requestedTime: escalation.preferred_time?.trim() || null } : null,
     ended: Boolean(conversation?.ended_at),
     endReason: END_REASONS.find((r) => r === conversation?.end_reason) ?? null,
+    escalationChannel: escalation?.contact_preference === 'text_chat' || escalation?.contact_preference === 'callback' ? escalation.contact_preference : null,
     supportMode: SUPPORT_MODES.find((m) => m === conversation?.support_mode) ?? 'ai',
     startedAt: isoOrNull(conversation?.started_at),
     serverTime: (context.now ?? new Date()).toISOString(),

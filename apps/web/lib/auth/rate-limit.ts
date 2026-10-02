@@ -54,4 +54,10 @@ export const CHAT_LIMITS = {
   staffMessages: { windowSeconds: 60, max: 60 },
   /** Typing signals are cheap but still bounded. */
   typing: { windowSeconds: 60, max: 40 },
+  /** "I have read up to here" signals. */
+  read: { windowSeconds: 60, max: 60 },
+  /** Staff heartbeat (every ~30 s) and the availability switch. */
+  presence: { windowSeconds: 60, max: 12 },
+  /** Changes to administrator settings. */
+  settings: { windowSeconds: 60, max: 10 },
 } as const;
