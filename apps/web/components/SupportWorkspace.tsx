@@ -1,5 +1,7 @@
 import type { ContactValues } from '@/lib/contact';
+import type { PublicEndReason } from '@/lib/conversation-state';
 import { COPY } from '@/lib/copy';
+import type { SessionView } from '@/lib/session/derive';
 import type { SupportState } from '@/lib/support/derive';
 import type { ConversationTurn } from '@/lib/transcript';
 import type { VoiceModel } from '@/lib/voice/state';
@@ -8,6 +10,7 @@ import ConversationComplete from './ConversationComplete';
 import ConversationPanel from './ConversationPanel';
 import ErrorState from './ErrorState';
 import EscalationPanel from './EscalationPanel';
+import { SessionWarning, SilenceCountdown } from './SessionNotices';
 import TicketConfirmation from './TicketConfirmation';
 import VoicePanel from './VoicePanel';
 
@@ -19,6 +22,10 @@ export interface WorkspaceProps {
   requestedTime: string | null;
   escalated: boolean;
   level: number;
+  /** Silence countdown and time-limit notices; absent means none are showing. */
+  session?: SessionView;
+  /** Why the session ended, when it ended on its own. */
+  endReason?: PublicEndReason | null;
   /** Voice support is not configured, so a call cannot be started. */
   unavailable?: boolean;
   onStart(): void;
@@ -67,7 +74,12 @@ export default function SupportWorkspace(p: WorkspaceProps) {
   if (state === 'ended') {
     return (
       <div className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-2">
-        <ConversationComplete ticketReference={p.ticketReference} escalated={p.escalated} onStartAnother={p.onStart} />
+        <ConversationComplete
+          ticketReference={p.ticketReference}
+          escalated={p.escalated}
+          endReason={p.endReason}
+          onStartAnother={p.onStart}
+        />
         {p.turns.length > 0 && <ConversationPanel turns={p.turns} />}
       </div>
     );
@@ -77,6 +89,12 @@ export default function SupportWorkspace(p: WorkspaceProps) {
   return (
     <div className="mx-auto grid w-full max-w-5xl items-start gap-6 px-4 py-6 sm:px-6 lg:grid-cols-2">
       <div className="flex flex-col gap-6">
+        {p.session?.silenceCountdown != null ? (
+          <SilenceCountdown seconds={p.session.silenceCountdown} />
+        ) : (
+          p.session?.sessionWarning &&
+          p.session.secondsLeft != null && <SessionWarning secondsLeft={p.session.secondsLeft} />
+        )}
         <section className="rounded-lg border border-line bg-surface p-6 shadow-card" aria-label="Voice">
           <VoicePanel
             state={state}

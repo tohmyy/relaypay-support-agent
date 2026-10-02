@@ -1,5 +1,7 @@
 'use client';
 
+import type { PublicEndReason } from '@/lib/conversation-state';
+import type { SessionView } from '@/lib/session/derive';
 import type { ConversationTurn } from '@/lib/transcript';
 import type { SupportState } from '@/lib/support/derive';
 import type { VoiceModel } from '@/lib/voice/state';
@@ -32,6 +34,8 @@ interface Fixture {
   requestedTime?: string | null;
   escalated?: boolean;
   unavailable?: boolean;
+  session?: SessionView;
+  endReason?: PublicEndReason | null;
 }
 
 const FIXTURES: Fixture[] = [
@@ -64,6 +68,22 @@ const FIXTURES: Fixture[] = [
     turns: [t(1, 'user', 'My invoice payment failed.'), t(2, 'assistant', "I've created a support request. Your reference is TKT-000123.")],
     ticketReference: 'TKT-000123',
   },
+  {
+    name: 'silence-countdown',
+    voice: { state: 'listening' },
+    support: 'normal',
+    turns: FEES,
+    session: { silenceCountdown: 7, secondsLeft: 250, sessionWarning: false },
+  },
+  {
+    name: 'session-warning',
+    voice: { state: 'listening' },
+    support: 'normal',
+    turns: FEES,
+    session: { silenceCountdown: null, secondsLeft: 24, sessionWarning: true },
+  },
+  { name: 'ended-silence', voice: { state: 'ended' }, support: 'completed', turns: FEES, endReason: 'silence-timeout' },
+  { name: 'ended-session-limit', voice: { state: 'ended' }, support: 'completed', turns: FEES, endReason: 'session-timeout' },
   { name: 'error-microphone', voice: { state: 'error', error: 'microphone' }, support: 'normal', turns: [] },
   { name: 'error-connection', voice: { state: 'error', error: 'connection' }, support: 'normal', turns: [] },
   {
@@ -94,6 +114,8 @@ export default function StatesGallery() {
             requestedTime={f.requestedTime ?? null}
             escalated={f.escalated ?? false}
             level={0.6}
+            session={f.session}
+            endReason={f.endReason}
             unavailable={f.unavailable}
             onStart={noop}
             onEnd={noop}
