@@ -42,6 +42,8 @@ export type TurnDecision =
   | { kind: 'reply'; text: string };
 
 export interface SessionControllerOptions {
+  /** Which ways of reaching a person an administrator allows. If a live text chat is off, no one is moved to one. */
+  methods?: () => Promise<{ textChat: boolean }>;
   db: SupabaseClient;
   control?: VapiCallControl;
   config?: SessionConfig;
@@ -111,9 +113,11 @@ export class SessionController {
   private readonly control: VapiCallControl;
   private readonly config: SessionConfig;
   private readonly db: SupabaseClient;
+  private readonly methods?: () => Promise<{ textChat: boolean }>;
 
   constructor(opts: SessionControllerOptions) {
     this.db = opts.db;
+    this.methods = opts.methods;
     this.control = opts.control ?? noopCallControl;
     this.config = opts.config ?? DEFAULT_SESSION_CONFIG;
   }
@@ -239,7 +243,9 @@ export class SessionController {
   /** Call after every turn, including failed ones (pass undefined). */
   afterTurn(
     conversationId: string,
-    result?: Partial<Pick<TurnResult, 'answerType' | 'escalated' | 'escalationCreated' | 'toolsUsed' | 'retrieved'>>,
+    result?: Partial<
+      Pick<TurnResult, 'answerType' | 'escalated' | 'escalationCreated' | 'escalationChannel' | 'toolsUsed' | 'retrieved'>
+    >,
   ) {
     const s = this.sessions.get(conversationId);
     if (!s || s.ended) return;
@@ -251,7 +257,10 @@ export class SessionController {
       s.toolCalls += result.toolsUsed?.length ?? 0;
       if (result.retrieved) s.retrievalCalls += 1;
     }
-    if (result?.escalationCreated && this.config.humanHandoff) void this.armHandoff(s, 'escalation');
+    // Only a customer who chose the live text chat is moved to a person; a callback (or no stated choice) keeps the call.
+    if (result?.escalationCreated && result.escalationChannel === 'text_chat' && this.config.humanHandoff) {
+      void this.armHandoff(s, 'escalation');
+    }
     // The reply is about to be spoken; the assistant-stopped event restarts the silence timer.
   }
 
@@ -531,6 +540,15 @@ export class SessionController {
    */
   private async armHandoff(s: Session, reason: HandoffReason) {
     if (s.ended || s.mode === 'human' || s.pendingHandoff) return;
+    // The assistant is told what is on, but the setting is enforced here: switched off since, or ignored by the model,
+    // the customer simply stays on the call.
+    if (reason === 'escalation' && this.methods) {
+      try {
+        if (!(await this.methods()).textChat) return;
+      } catch {
+        // If the setting cannot be read the defaults apply (text chat on).
+      }
+    }
     await this.refreshIdentity(s);
     if (!s.customerId || s.ended || this.isHuman(s) || s.pendingHandoff) return;
     s.pendingHandoff = { reason, sawSpeech: false };

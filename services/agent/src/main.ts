@@ -4,6 +4,7 @@ import { createAgentServer } from './server';
 import { sessionConfigFromEnv } from './session/config';
 import { SessionController } from './session/controller';
 import { createVapiCallControl } from './session/vapi-control';
+import { chatOfferSourceFor } from './chat-offer';
 import { getSupabase } from './supabase';
 import { WarmPool } from './warm';
 
@@ -20,6 +21,7 @@ const session = new SessionController({
   db,
   config: sessionConfig,
   control: createVapiCallControl({ apiKey: env.VAPI_API_KEY }),
+  methods: () => chatOfferSourceFor(db).methods(),
 });
 
 // Optional: keep an agent process started per live call so a turn does not pay for process start. Off by default

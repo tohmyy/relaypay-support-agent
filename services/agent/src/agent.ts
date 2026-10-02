@@ -6,6 +6,7 @@ import { categoryForTool, type TurnProgress } from './acks';
 import { applyGuard } from './guard';
 import { recordError } from './observability';
 import { ensureConversation, loadHistory, saveTurn } from './history';
+import { chatOfferSourceFor, type ContactContext } from './chat-offer';
 import { buildPrompt, retrievalQuery } from './prompt';
 import { answerJsonSchema, parseAnswer, type AnswerType } from './schema';
 import { getSupabase } from './supabase';
@@ -44,6 +45,8 @@ export interface TurnResult {
   escalated: boolean;
   /** True only when the create_escalation tool actually succeeded in this turn (the trigger for a human handoff). */
   escalationCreated: boolean;
+  /** How the customer chose to be helped, as passed to create_escalation (absent when the model passed none). */
+  escalationChannel?: 'text_chat' | 'callback';
   /** A knowledge lookup ran for this turn (counted against the conversation's retrieval budget). */
   retrieved: boolean;
   /** Number of the stored turn, so timings can be attached to it once the reply has gone out. */
@@ -64,8 +67,13 @@ export interface AgentDeps {
   mcpToken?: string;
   model?: string;
   systemPrompt?: string;
-  /** Mode B is on: tell the model that, for a signed-in customer, an escalation continues by text with a specialist. */
+  /** Human handoff is on: a signed-in customer is offered a live text chat with a person at escalation. */
   humanHandoff?: boolean;
+  /**
+   * Looks up which ways of reaching a person may be offered to this caller (the administrator's setting, whether a live text
+   * chat is possible, account contact details, whether anyone is online).
+   */
+  contactContext?: (customerId: string | null, handoffEnabled: boolean) => Promise<ContactContext | undefined>;
 }
 
 /** The options for a pre-started agent process for one conversation (same as a cold turn would use). */
@@ -111,6 +119,7 @@ interface Block {
   id?: string;
   name?: string;
   tool_use_id?: string;
+  input?: unknown;
   is_error?: boolean;
   content?: unknown;
 }
@@ -193,8 +202,16 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
     const [, history] = await timer.span('history_ms', () =>
       Promise.all([ensureConversation(db, conversationId), loadHistory(db, conversationId)]),
     );
-    const retrieval = await timer.span('retrieval_ms', () =>
-      retrieve(retrievalQuery(userMessage, history.turns), { conversationId }),
+    // Which ways of reaching a person may be offered (before any escalation) is looked up alongside the knowledge search,
+    // so it adds no waiting; the setting and the account details are cached for a short time.
+    const contactPromise: Promise<ContactContext | undefined> = history.escalationRaised
+      ? Promise.resolve(undefined)
+      : (deps.contactContext ?? ((id, enabled) => chatOfferSourceFor(db).contactFor(id, enabled)))(
+          history.customerId,
+          Boolean(deps.humanHandoff),
+        );
+    const [retrieval, contact] = await timer.span('retrieval_ms', () =>
+      Promise.all([retrieve(retrievalQuery(userMessage, history.turns), { conversationId }), contactPromise]),
     );
     const knowledge = retrieval.chunks;
     if (progress && knowledge.length > 0) progress.knowledge = true;
@@ -205,7 +222,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       history: history.turns,
       knowledge,
       escalationRaised: history.escalationRaised,
-      humanHandoffAvailable: Boolean(deps.humanHandoff && history.customerId),
+      contact,
     });
 
     // Run the model and watch its tool traffic.
@@ -213,6 +230,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
     const toolsUsed: string[] = [];
     const internalTexts: string[] = [];
     let escalationCreated = false;
+    let escalationChannel: 'text_chat' | 'callback' | undefined;
     let structured: unknown;
     let resultText: string | undefined;
     let costUsd: number | undefined;
@@ -247,6 +265,10 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
               const short = b.name.replace(`mcp__${MCP_SERVER_NAME}__`, '');
               toolNames.set(b.id, short);
               toolsUsed.push(short);
+              if (short === 'create_escalation') {
+                const choice = (b.input as { contact_preference?: unknown } | undefined)?.contact_preference;
+                if (choice === 'text_chat' || choice === 'callback') escalationChannel = choice;
+              }
               toolStarts.set(b.id, timer.time());
               // What the model is really doing is the best cue for the acknowledgement.
               if (progress) progress.toolCategory = categoryForTool(short) ?? progress.toolCategory;
@@ -315,6 +337,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       toolsUsed,
       escalated: guarded.answerType === 'escalation' || escalationCreated,
       escalationCreated,
+      escalationChannel: escalationCreated ? escalationChannel : undefined,
       retrieved: true,
       turnNumber: history.nextTurnNumber,
     };

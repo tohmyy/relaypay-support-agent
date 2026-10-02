@@ -65,6 +65,7 @@ export interface Store {
     category: string;
     reason: string;
     preferred_time?: string;
+    contact_preference?: 'text_chat' | 'callback';
     conversation_id?: string;
   }): Promise<string>;
   insertEvent(e: {

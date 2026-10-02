@@ -47,6 +47,8 @@ export const createSupportTicketSchema = z.strictObject({
   conversation_id: id,
 });
 
+export const CONTACT_PREFERENCES = ['text_chat', 'callback'] as const;
+
 export const createEscalationSchema = z.strictObject({
   ticket_id: id.optional(),
   customer_id: id.optional(),
@@ -55,6 +57,8 @@ export const createEscalationSchema = z.strictObject({
   category: z.enum(ESCALATION_CATEGORIES),
   reason: text(1000),
   preferred_time: text(100).optional(),
+  /** How the customer chose to be helped: a live text chat with a specialist, or a callback. */
+  contact_preference: z.enum(CONTACT_PREFERENCES).optional(),
 });
 
 export const logConversationEventSchema = z.strictObject({

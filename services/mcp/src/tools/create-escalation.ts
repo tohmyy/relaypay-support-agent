@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { pick } from '../utils/logging';
 import { ToolError } from '../utils/errors';
-import { createEscalationSchema, ESCALATION_CATEGORIES } from '../validation/schemas';
+import { CONTACT_PREFERENCES, createEscalationSchema, ESCALATION_CATEGORIES } from '../validation/schemas';
 import type { ToolDef } from './types';
 
 export const createEscalation: ToolDef<z.infer<typeof createEscalationSchema>> = {
@@ -10,7 +10,8 @@ export const createEscalation: ToolDef<z.infer<typeof createEscalationSchema>> =
   summarize: (r) => `escalation ${pick(r.escalation_id)} created`,
   description:
     'Hand the customer to human support. Requires user_name, user_email, category and reason. ' +
-    'Optionally link ticket_id and customer_id. Returns the escalation_id.',
+    'Optionally link ticket_id and customer_id. contact_preference is text_chat (the customer chose a live text chat ' +
+    'with a specialist) or callback. Returns the escalation_id.',
   shape: {
     ticket_id: z.string().optional(),
     customer_id: z.string().optional(),
@@ -22,6 +23,10 @@ export const createEscalation: ToolDef<z.infer<typeof createEscalationSchema>> =
       .describe(`one of: ${ESCALATION_CATEGORIES.join(', ')}`),
     reason: z.string().optional(),
     preferred_time: z.string().optional(),
+    contact_preference: z
+      .string()
+      .optional()
+      .describe(`one of: ${CONTACT_PREFERENCES.join(', ')}`),
   },
   schema: createEscalationSchema,
   async run(input, store, ctx) {
@@ -41,8 +46,11 @@ export const createEscalation: ToolDef<z.infer<typeof createEscalationSchema>> =
       escalation_id: escalationId,
       status: 'open',
       follow_up_summary:
-        `Your ${input.category} request has been passed to the RelayPay support team. ` +
-        'They will follow up using the contact details you provided.',
+        input.contact_preference === 'text_chat'
+          ? `Your ${input.category} request has been passed to the RelayPay support team. ` +
+            'A support specialist will continue with you by text chat.'
+          : `Your ${input.category} request has been passed to the RelayPay support team. ` +
+            'They will follow up using the contact details you provided.',
     };
   },
 };

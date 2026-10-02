@@ -1,4 +1,5 @@
 import type { KbResult } from '../retrieval/retrieve';
+import type { ContactContext } from './chat-offer';
 
 export interface HistoryTurn {
   user: string;
@@ -11,8 +12,11 @@ export interface PromptParts {
   history: HistoryTurn[];
   knowledge: KbResult[];
   escalationRaised: boolean;
-  /** Mode B: after an escalation this customer continues by text with a specialist and the call ends. */
-  humanHandoffAvailable?: boolean;
+  /**
+   * Which ways of reaching a person may be offered to this caller (an administrator's setting, and whether a live text chat
+   * is possible for them), and for a text chat the customer's own account details. Absent means the normal callback procedure.
+   */
+  contact?: ContactContext;
 }
 
 /** Stops user, document or history text from closing or forging a prompt block. */
@@ -47,10 +51,16 @@ export function buildPrompt(p: PromptParts): string {
       '<escalation_already_raised>A human handoff was already created on this call. Do not re-diagnose.</escalation_already_raised>',
     );
   }
-  if (p.humanHandoffAvailable) {
+  if (p.contact) {
+    const yn = (v: boolean) => (v ? 'yes' : 'no');
     blocks.push(
-      '<human_handoff_available>This customer is signed in. After you create the escalation, tell them a support specialist will continue helping them by text in this same window, that this call is about to end, and that they do not need to do anything. Do not promise a time.</human_handoff_available>',
+      `<contact_methods text_chat="${yn(p.contact.textChat)}" callback="${yn(p.contact.callback)}" staff_online="${yn(p.contact.staffOnline)}">Ways of reaching a person for this caller. If escalation is required, follow "Contact methods".</contact_methods>`,
     );
+    if (p.contact.textChat && p.contact.customer) {
+      blocks.push(
+        `<signed_in_customer>\nname: ${escapeBlock(p.contact.customer.name)}\nemail: ${escapeBlock(p.contact.customer.email)}\n</signed_in_customer>`,
+      );
+    }
   }
   blocks.push(`<current_user_message>\n${escapeBlock(p.userMessage)}\n</current_user_message>`);
   return blocks.join('\n\n');

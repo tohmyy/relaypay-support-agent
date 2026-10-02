@@ -28,7 +28,7 @@ export async function startHandoff(
   const now = (opts.now ?? new Date()).toISOString();
   const moved = await db
     .from('conversations')
-    .update({ support_mode: 'human', last_activity_at: now })
+    .update({ support_mode: 'human', last_activity_at: now, handoff_at: now })
     .eq('conversation_id', conversationId)
     .eq('support_mode', 'ai');
   fail('start handoff', moved.error);
