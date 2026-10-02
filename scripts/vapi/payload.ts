@@ -33,6 +33,87 @@ export const MAX_DURATION_MARGIN_SECONDS = 10;
 /** Vapi's silence timeout is set high so the Session Controller (silence + countdown) is the authority. */
 export const VAPI_SILENCE_BACKSTOP_SECONDS = 600;
 
+/**
+ * How readily the customer can talk over the assistant, and how much background noise counts as speech. Every field
+ * is optional: a field that is not set leaves the assistant exactly as it is configured in Vapi.
+ */
+export interface InterruptionSettings {
+  /** Words the customer must say before the assistant stops (0 = react at once; 0 to 10). Plain "okay" never interrupts. */
+  numWords?: number;
+  /** Seconds of voice before the assistant stops, when numWords is 0 (0 to 0.5; Vapi's default is 0.2). */
+  voiceSeconds?: number;
+  /** Seconds the assistant waits before speaking again after being interrupted (0 to 10; default 1). */
+  backoffSeconds?: number;
+  /** Seconds the assistant waits after the customer stops before it answers (0 to 5; default 0.4). */
+  waitSeconds?: number;
+  /** Krisp background-noise removal on Vapi's side. */
+  smartDenoising?: boolean;
+}
+
+/** The plans the assistant has today (from GET), so changing one field does not reset the others. */
+export interface CurrentPlans {
+  stopSpeakingPlan?: Record<string, unknown> | null;
+  startSpeakingPlan?: Record<string, unknown> | null;
+  backgroundSpeechDenoisingPlan?: Record<string, unknown> | null;
+}
+
+const INTERRUPTION_VARIABLES = {
+  numWords: { name: 'INTERRUPT_NUM_WORDS', min: 0, max: 10, integer: true },
+  voiceSeconds: { name: 'INTERRUPT_VOICE_SECONDS', min: 0, max: 0.5, integer: false },
+  backoffSeconds: { name: 'INTERRUPT_BACKOFF_SECONDS', min: 0, max: 10, integer: false },
+  waitSeconds: { name: 'START_WAIT_SECONDS', min: 0, max: 5, integer: false },
+} as const;
+
+/**
+ * Reads the optional tuning variables. Blank or missing means "leave it alone". Anything out of range is reported by
+ * variable name only, so a typo cannot silently change how the assistant listens.
+ */
+export function interruptionFromEnv(env: Record<string, string | undefined>): InterruptionSettings {
+  const out: InterruptionSettings = {};
+  const bad: string[] = [];
+  for (const [key, rule] of Object.entries(INTERRUPTION_VARIABLES)) {
+    const raw = (env[rule.name] ?? '').trim();
+    if (raw === '') continue;
+    const n = Number(raw);
+    const ok = Number.isFinite(n) && n >= rule.min && n <= rule.max && (!rule.integer || Number.isInteger(n));
+    if (ok) (out as Record<string, number>)[key] = n;
+    else bad.push(rule.name);
+  }
+  const denoise = (env.SMART_DENOISING ?? '').trim();
+  if (denoise === '1' || denoise === '0') out.smartDenoising = denoise === '1';
+  else if (denoise !== '') bad.push('SMART_DENOISING');
+  if (bad.length > 0) throw new Error(`Missing or invalid environment variables: ${bad.join(', ')}`);
+  return out;
+}
+
+/**
+ * The assistant fields that apply the settings that were actually given. Each plan is the assistant's current plan
+ * with only those fields changed, because a PATCH replaces a nested plan as a whole.
+ */
+export function interruptionPatch(settings: InterruptionSettings = {}, current: CurrentPlans = {}) {
+  const stop: Record<string, unknown> = {};
+  for (const key of ['numWords', 'voiceSeconds', 'backoffSeconds'] as const) {
+    if (settings[key] !== undefined) stop[key] = settings[key];
+  }
+  return {
+    ...(Object.keys(stop).length > 0 ? { stopSpeakingPlan: { ...current.stopSpeakingPlan, ...stop } } : {}),
+    ...(settings.waitSeconds !== undefined
+      ? { startSpeakingPlan: { ...current.startSpeakingPlan, waitSeconds: settings.waitSeconds } }
+      : {}),
+    ...(settings.smartDenoising !== undefined
+      ? {
+          backgroundSpeechDenoisingPlan: {
+            ...current.backgroundSpeechDenoisingPlan,
+            smartDenoisingPlan: {
+              ...(current.backgroundSpeechDenoisingPlan?.smartDenoisingPlan as Record<string, unknown> | undefined),
+              enabled: settings.smartDenoising,
+            },
+          },
+        }
+      : {}),
+  };
+}
+
 export function assistantPatch(opts: {
   baseUrl: string;
   credentialId: string;
@@ -40,6 +121,10 @@ export function assistantPatch(opts: {
   firstMessage?: string;
   /** SESSION_MAX_SECONDS: when given, Vapi also enforces a slightly longer limit as a backstop. */
   sessionMaxSeconds?: number;
+  /** Opt-in interruption and noise tuning. Nothing here is applied unless a field is set. */
+  interruption?: InterruptionSettings;
+  /** The assistant's current speaking and denoising plans, merged under the settings above. */
+  current?: CurrentPlans;
 }) {
   return {
     model: {
@@ -61,6 +146,7 @@ export function assistantPatch(opts: {
         }
       : {}),
     ...(opts.firstMessage ? { firstMessage: opts.firstMessage } : {}),
+    ...interruptionPatch(opts.interruption, opts.current),
   };
 }
 

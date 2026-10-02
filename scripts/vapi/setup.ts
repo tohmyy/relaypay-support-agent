@@ -1,10 +1,19 @@
 import { writeFileSync } from 'node:fs';
-import { assistantPatch, credentialName, credentialPayload, normalizePublicUrl, redact } from './payload';
+import {
+  assistantPatch,
+  credentialName,
+  credentialPayload,
+  interruptionFromEnv,
+  normalizePublicUrl,
+  redact,
+} from './payload';
 
 // Points the user's EXISTING Vapi assistant at the RelayPay agent (custom LLM + webhook).
 // It never creates an assistant, changes only model/server/serverMessages and the session-limit backstops
-// (maxDurationSeconds, silenceTimeoutSeconds), plus firstMessage when asked,
-// and with --dry-run it prints what it would send without changing anything.
+// (maxDurationSeconds, silenceTimeoutSeconds), plus firstMessage when asked, and, only for the variables you set,
+// how the assistant handles interruptions and background noise (INTERRUPT_NUM_WORDS, INTERRUPT_VOICE_SECONDS,
+// INTERRUPT_BACKOFF_SECONDS, START_WAIT_SECONDS, SMART_DENOISING; see docs/VAPI.md).
+// With --dry-run it prints what it would send without changing anything.
 //
 //   npm run vapi:setup -- --url https://xyz.trycloudflare.com [--dry-run] [--first-message "..."]
 
@@ -29,6 +38,14 @@ const apiKey = need('VAPI_API_KEY');
 const assistantId = need('VAPI_ASSISTANT_ID');
 const agentToken = need('AGENT_API_TOKEN', 16);
 const webhookSecret = need('VAPI_WEBHOOK_SECRET', 8);
+
+let interruption: ReturnType<typeof interruptionFromEnv>;
+try {
+  interruption = interruptionFromEnv(process.env);
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
+}
 
 let baseUrl: string;
 try {
@@ -70,6 +87,10 @@ function describe(a: Record<string, any>) {
     serverMessages: a.serverMessages,
     maxDurationSeconds: a.maxDurationSeconds,
     silenceTimeoutSeconds: a.silenceTimeoutSeconds,
+    // How it handles being talked over and background noise. Undefined means Vapi's own defaults apply.
+    stopSpeakingPlan: a.stopSpeakingPlan,
+    startSpeakingPlan: a.startSpeakingPlan,
+    backgroundSpeechDenoisingPlan: a.backgroundSpeechDenoisingPlan,
   };
 }
 
@@ -98,6 +119,12 @@ try {
     webhookSecret,
     firstMessage: arg('--first-message'),
     sessionMaxSeconds: Number(process.env.SESSION_MAX_SECONDS) || 360,
+    interruption,
+    current: {
+      stopSpeakingPlan: current.stopSpeakingPlan,
+      startSpeakingPlan: current.startSpeakingPlan,
+      backgroundSpeechDenoisingPlan: current.backgroundSpeechDenoisingPlan,
+    },
   });
   console.log('\nChanges to the assistant:');
   console.log(JSON.stringify(redact(patch), null, 2));
@@ -118,6 +145,9 @@ try {
           firstMessage: current.firstMessage,
           maxDurationSeconds: current.maxDurationSeconds,
           silenceTimeoutSeconds: current.silenceTimeoutSeconds,
+          stopSpeakingPlan: current.stopSpeakingPlan,
+          startSpeakingPlan: current.startSpeakingPlan,
+          backgroundSpeechDenoisingPlan: current.backgroundSpeechDenoisingPlan,
         },
         null,
         2,

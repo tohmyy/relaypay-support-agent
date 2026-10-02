@@ -50,6 +50,10 @@ export function describeTimings(value: unknown): string {
   }
   const first = num(t.first_write_ms);
   if (first !== undefined) parts.push(`first reply byte ${fmt(first)}`);
+  if (t.delivered === false) {
+    const left = num(t.client_closed_ms);
+    parts.push(left === undefined ? 'reply not delivered' : `reply not delivered (customer left at ${fmt(left)})`);
+  }
   if (t.prewarmed === true) parts.push('pre-warmed');
   if (typeof t.ack_category === 'string') parts.push(`ack: ${t.ack_category}`);
   return parts.join(', ');

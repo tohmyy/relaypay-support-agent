@@ -28,8 +28,24 @@ export interface Report {
   tickets: number;
   escalations: number;
   latency: LatencyReport;
+  voice: VoiceReport;
   /** Averages per conversation (Build Plan V2 section 86). */
   perConversation: { turns: number | null; toolCalls: number | null };
+}
+
+/** How customers interact by voice: talking over the assistant, going quiet, and replies that never arrived. */
+export interface VoiceReport {
+  /** Calls that wrote a voice_stats event. */
+  calls: number;
+  interruptions: number;
+  /** Interruptions under half a second: likely noise or stray words rather than real interruptions. */
+  shortInterruptions: number;
+  silenceWarnings: number;
+  /** Replies the customer's connection closed on before they arrived (they spoke over the assistant mid-turn). */
+  undeliveredReplies: number;
+  /** The same, counted from turn timings (turns that record whether the reply was delivered). */
+  undeliveredTurns: number;
+  deliveryTrackedTurns: number;
 }
 
 export interface SegmentStats {
@@ -133,6 +149,35 @@ function buildLatency(input: ReportInput): LatencyReport {
   };
 }
 
+function buildVoice(input: ReportInput): VoiceReport {
+  const out: VoiceReport = {
+    calls: 0,
+    interruptions: 0,
+    shortInterruptions: 0,
+    silenceWarnings: 0,
+    undeliveredReplies: 0,
+    undeliveredTurns: 0,
+    deliveryTrackedTurns: 0,
+  };
+  const count = (meta: Record<string, unknown>, key: string) => (finite(meta[key]) && meta[key] >= 0 ? (meta[key] as number) : 0);
+  for (const e of input.events) {
+    if (e.event_type !== 'voice_stats') continue;
+    const meta = (e.metadata && typeof e.metadata === 'object' ? e.metadata : {}) as Record<string, unknown>;
+    out.calls++;
+    out.interruptions += count(meta, 'interruptions');
+    out.shortInterruptions += count(meta, 'short_interruptions');
+    out.silenceWarnings += count(meta, 'silence_warnings');
+    out.undeliveredReplies += count(meta, 'undelivered_replies');
+  }
+  for (const turn of input.turns) {
+    const t = readTimings(turn.timings);
+    if (typeof t.delivered !== 'boolean') continue;
+    out.deliveryTrackedTurns++;
+    if (t.delivered === false) out.undeliveredTurns++;
+  }
+  return out;
+}
+
 export function buildReport(input: ReportInput): Report {
   const latencies = input.turns
     .map((t) => t.latency_ms)
@@ -177,6 +222,7 @@ export function buildReport(input: ReportInput): Report {
     tickets: input.tickets,
     escalations: input.escalations,
     latency: buildLatency(input),
+    voice: buildVoice(input),
     perConversation: {
       turns: input.conversations.length
         ? Math.round((input.turns.length / input.conversations.length) * 10) / 10
@@ -196,6 +242,19 @@ const kv = (o: Record<string, number>) =>
     : 'none';
 const secs = (ms: number | null) => (ms == null ? 'n/a' : `${(ms / 1000).toFixed(1)}s`);
 const ms = (v: number | null) => (v == null ? 'n/a' : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
+
+function formatVoice(v: VoiceReport): string[] {
+  if (v.calls === 0 && v.deliveryTrackedTurns === 0) return ['Voice: no voice statistics yet'];
+  const per = (n: number) => (v.calls ? ` (${Math.round((n / v.calls) * 10) / 10} per call)` : '');
+  const lines = [`Voice (${v.calls} calls with statistics):`];
+  const short = v.interruptions ? `, ${v.shortInterruptions} under half a second (${Math.round((v.shortInterruptions / v.interruptions) * 100)}%)` : '';
+  lines.push(`  customer talked over the assistant: ${v.interruptions}${per(v.interruptions)}${short}`);
+  lines.push(`  silence countdowns: ${v.silenceWarnings}${per(v.silenceWarnings)}`);
+  lines.push(
+    `  replies that never arrived: ${v.undeliveredReplies} (${v.undeliveredTurns} of ${v.deliveryTrackedTurns} timed turns)`,
+  );
+  return lines;
+}
 
 function formatLatency(l: LatencyReport): string[] {
   if (l.timedTurns === 0) return ['Latency breakdown: no timed turns yet (turns before segment timings were recorded have none)'];
@@ -225,6 +284,7 @@ export function formatReport(r: Report, label: string): string {
     `Turns: ${r.turns.total} (${kv(r.turns.byAnswerType)})`,
     `Reply time: p50 ${secs(r.latencyMs.p50)}, p95 ${secs(r.latencyMs.p95)}, max ${secs(r.latencyMs.max)} over ${r.latencyMs.count} timed turns`,
     ...formatLatency(r.latency),
+    ...formatVoice(r.voice),
     `Per conversation: ${r.perConversation.turns ?? 'n/a'} turns, ${r.perConversation.toolCalls ?? 'n/a'} tool calls on average`,
     `Model cost estimate: $${r.costUsd.total.toFixed(4)}`,
     `Tickets: ${r.tickets}, escalations: ${r.escalations}`,
