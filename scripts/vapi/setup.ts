@@ -2,7 +2,8 @@ import { writeFileSync } from 'node:fs';
 import { assistantPatch, credentialName, credentialPayload, normalizePublicUrl, redact } from './payload';
 
 // Points the user's EXISTING Vapi assistant at the RelayPay agent (custom LLM + webhook).
-// It never creates an assistant, changes only model/server/serverMessages (plus firstMessage when asked),
+// It never creates an assistant, changes only model/server/serverMessages and the session-limit backstops
+// (maxDurationSeconds, silenceTimeoutSeconds), plus firstMessage when asked,
 // and with --dry-run it prints what it would send without changing anything.
 //
 //   npm run vapi:setup -- --url https://xyz.trycloudflare.com [--dry-run] [--first-message "..."]
@@ -67,6 +68,8 @@ function describe(a: Record<string, any>) {
     firstMessage: a.firstMessage,
     server: a.server?.url,
     serverMessages: a.serverMessages,
+    maxDurationSeconds: a.maxDurationSeconds,
+    silenceTimeoutSeconds: a.silenceTimeoutSeconds,
   };
 }
 
@@ -94,6 +97,7 @@ try {
     credentialId: credentialId ?? '<new credential id>',
     webhookSecret,
     firstMessage: arg('--first-message'),
+    sessionMaxSeconds: Number(process.env.SESSION_MAX_SECONDS) || 360,
   });
   console.log('\nChanges to the assistant:');
   console.log(JSON.stringify(redact(patch), null, 2));
@@ -106,7 +110,18 @@ try {
     const backup = `vapi-assistant-backup-${assistantId.slice(0, 8)}.json`;
     writeFileSync(
       backup,
-      JSON.stringify({ model: current.model, server: current.server, serverMessages: current.serverMessages, firstMessage: current.firstMessage }, null, 2),
+      JSON.stringify(
+        {
+          model: current.model,
+          server: current.server,
+          serverMessages: current.serverMessages,
+          firstMessage: current.firstMessage,
+          maxDurationSeconds: current.maxDurationSeconds,
+          silenceTimeoutSeconds: current.silenceTimeoutSeconds,
+        },
+        null,
+        2,
+      ),
     );
     console.log(`
 Saved the previous settings to ${backup} (git-ignored).`);

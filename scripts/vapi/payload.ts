@@ -27,11 +27,19 @@ export function credentialPayload(name: string, apiKey: string) {
  * The parts of the existing assistant this integration changes: the LLM (our endpoint), the webhook and the
  * server messages. Voice, transcriber and other settings are left as the user configured them.
  */
+export const SERVER_MESSAGES = ['status-update', 'speech-update', 'end-of-call-report'];
+/** Margin between the controller's own time limit and Vapi's independent backstop. */
+export const MAX_DURATION_MARGIN_SECONDS = 10;
+/** Vapi's silence timeout is set high so the Session Controller (silence + countdown) is the authority. */
+export const VAPI_SILENCE_BACKSTOP_SECONDS = 600;
+
 export function assistantPatch(opts: {
   baseUrl: string;
   credentialId: string;
   webhookSecret: string;
   firstMessage?: string;
+  /** SESSION_MAX_SECONDS: when given, Vapi also enforces a slightly longer limit as a backstop. */
+  sessionMaxSeconds?: number;
 }) {
   return {
     model: {
@@ -45,7 +53,13 @@ export function assistantPatch(opts: {
     // The API rejects credentialId on the model; credentials are attached to the assistant instead.
     credentialIds: [opts.credentialId],
     server: { url: `${opts.baseUrl}/vapi/events`, secret: opts.webhookSecret },
-    serverMessages: ['status-update', 'end-of-call-report'],
+    serverMessages: SERVER_MESSAGES,
+    ...(opts.sessionMaxSeconds
+      ? {
+          maxDurationSeconds: opts.sessionMaxSeconds + MAX_DURATION_MARGIN_SECONDS,
+          silenceTimeoutSeconds: VAPI_SILENCE_BACKSTOP_SECONDS,
+        }
+      : {}),
     ...(opts.firstMessage ? { firstMessage: opts.firstMessage } : {}),
   };
 }
