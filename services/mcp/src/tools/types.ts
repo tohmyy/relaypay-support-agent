@@ -13,10 +13,12 @@ export interface ToolDef<I = unknown> {
   shape: Record<string, ZodType>;
   schema: ZodType<I>;
   /**
-   * Reads or writes one customer's account. When the conversation is linked to a signed-in customer these are scoped
-   * to that customer; when identity is required and the conversation is not linked they are refused.
+   * Reads or writes one customer's account. Always scoped to the signed-in customer the conversation is linked to; a
+   * conversation that is not linked, or whose account has no name or email, is refused before the tool runs.
    */
   accountScoped?: boolean;
+  /** Creates records. Refused without a linked account even where a read-only tool may run unlinked (`allowUnlinked`). */
+  mutates?: boolean;
   run(input: I, store: Store, ctx: ToolContext): Promise<Record<string, unknown>>;
   /** Conversation id to attach to the tool_calls log row, when the input carries one. */
   conversationId?(input: I): string | undefined;

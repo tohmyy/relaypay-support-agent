@@ -18,9 +18,11 @@ export const lookupPayout: ToolDef<z.infer<typeof lookupPayoutSchema>> = {
   schema: lookupPayoutSchema,
   accountScoped: true,
   async run(input, store, ctx) {
-    const p = await store.findPayout(input);
-    if (!p || (ctx.identity && p.customer_id !== ctx.identity.customerId)) return { found: false };
-    const txn = p.transaction_id ? await store.getTransaction(p.transaction_id) : null;
+    // The customer predicate is part of both queries, so someone else's payout looks exactly like a missing one.
+    const customerId = ctx.identity?.customerId;
+    const p = await store.findPayout(input, customerId);
+    if (!p) return { found: false };
+    const txn = p.transaction_id ? await store.getTransaction(p.transaction_id, customerId) : null;
     return {
       found: true,
       payout_id: p.payout_id,

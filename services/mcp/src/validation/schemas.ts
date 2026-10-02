@@ -39,25 +39,21 @@ export const lookupPayoutSchema = z
     message: 'Provide payout_id or transaction_id',
   });
 
-export const createSupportTicketSchema = z.strictObject({
-  customer_id: id.optional(),
+/**
+ * The customer, their contact details and any ticket come from the linked account and the conversation, never from the
+ * model. A model that still sends `customer_id`, `user_name`, `user_email` or `ticket_id` is not refused: the fields
+ * are dropped here (a plain object strips unknown keys) and nothing downstream can read them.
+ */
+export const createSupportTicketSchema = z.object({
   category: z.enum(TICKET_CATEGORIES),
   priority: z.enum(TICKET_PRIORITIES),
   summary: text(1000),
-  conversation_id: id,
+  conversation_id: id.optional(),
 });
 
 export const CONTACT_PREFERENCES = ['text_chat', 'callback'] as const;
 
-export const createEscalationSchema = z.strictObject({
-  ticket_id: id.optional(),
-  customer_id: id.optional(),
-  /**
-   * Contact details come from the signed-in account (app_users) and override anything supplied here. They are only
-   * required in the rare case the conversation is not linked to an account.
-   */
-  user_name: text(120).optional(),
-  user_email: z.email().max(254).optional(),
+export const createEscalationSchema = z.object({
   category: z.enum(ESCALATION_CATEGORIES),
   reason: text(1000),
   /** Free-text display of the callback time; the validated instant is `preferred_at`. */

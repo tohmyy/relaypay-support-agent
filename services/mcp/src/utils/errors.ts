@@ -2,6 +2,7 @@ export type ErrorCode =
   | 'invalid_input'
   | 'reference_not_found'
   | 'not_authorized'
+  | 'profile_incomplete'
   | 'temporarily_unavailable';
 
 /** An error whose message is safe to show to the caller. */

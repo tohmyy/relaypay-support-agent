@@ -20,10 +20,7 @@ function gatedStore() {
 describe('recording tool calls in the background', () => {
   it('returns the result without waiting for the tool_calls row', async () => {
     const { store, release } = gatedStore();
-    const result = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, {
-      conversationId: 'vapi_a',
-      background: true,
-    });
+    const result = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a', background: true, allowUnlinked: true });
     expect(result).toMatchObject({ found: true, transaction_id: 'TXN-9001' });
     expect(store.toolCalls).toHaveLength(0); // the write is still waiting
     release();
@@ -39,8 +36,8 @@ describe('recording tool calls in the background', () => {
   it('writes the same row as the awaited path', async () => {
     const awaited = createFakeStore();
     const background = createFakeStore();
-    await executeTool(tool('lookup_payout'), { payout_id: 'PAY-7001' }, awaited, { conversationId: 'vapi_a' });
-    await executeTool(tool('lookup_payout'), { payout_id: 'PAY-7001' }, background, { conversationId: 'vapi_a', background: true });
+    await executeTool(tool('lookup_payout'), { payout_id: 'PAY-7001' }, awaited, { conversationId: 'vapi_a', allowUnlinked: true });
+    await executeTool(tool('lookup_payout'), { payout_id: 'PAY-7001' }, background, { conversationId: 'vapi_a', background: true, allowUnlinked: true });
     await flushToolRecords();
     const strip = (r: Record<string, unknown>) => ({ ...r, duration_ms: 0 });
     expect(strip(background.toolCalls[0] as never)).toEqual(strip(awaited.toolCalls[0] as never));
@@ -48,7 +45,7 @@ describe('recording tool calls in the background', () => {
 
   it('is the awaited path by default, so existing callers see the row straight away', async () => {
     const store = createFakeStore();
-    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a' });
+    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a', allowUnlinked: true });
     expect(store.toolCalls).toHaveLength(1);
   });
 
@@ -58,10 +55,7 @@ describe('recording tool calls in the background', () => {
     store.recordToolCall = async () => {
       throw new Error('db down');
     };
-    const result = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, {
-      conversationId: 'vapi_a',
-      background: true,
-    });
+    const result = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a', background: true, allowUnlinked: true });
     expect(result).toMatchObject({ found: true });
     await expect(flushToolRecords()).resolves.toBeUndefined();
     spy.mockRestore();
@@ -69,8 +63,8 @@ describe('recording tool calls in the background', () => {
 
   it('records failures and misses too', async () => {
     const store = createFakeStore();
-    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-0000' }, store, { background: true });
-    await executeTool(tool('lookup_transaction'), {}, store, { background: true });
+    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-0000' }, store, { background: true, allowUnlinked: true });
+    await executeTool(tool('lookup_transaction'), {}, store, { background: true, allowUnlinked: true });
     await flushToolRecords();
     expect(store.toolCalls.map((c) => c.status).sort()).toEqual(['failed', 'not_found']);
   });
@@ -78,7 +72,7 @@ describe('recording tool calls in the background', () => {
   it('can be flushed repeatedly and when nothing is pending', async () => {
     await expect(flushToolRecords()).resolves.toBeUndefined();
     const store = createFakeStore();
-    await executeTool(tool('lookup_customer'), { customer_id: 'CUS-1001' }, store, { background: true });
+    await executeTool(tool('lookup_customer'), { customer_id: 'CUS-1001' }, store, { background: true, allowUnlinked: true });
     await flushToolRecords();
     await flushToolRecords();
     expect(store.toolCalls).toHaveLength(1);
@@ -87,8 +81,8 @@ describe('recording tool calls in the background', () => {
   it('keeps writes of several calls independent', async () => {
     const store = createFakeStore();
     await Promise.all([
-      executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a', background: true }),
-      executeTool(tool('lookup_customer'), { customer_id: 'CUS-1001' }, store, { conversationId: 'vapi_b', background: true }),
+      executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, { conversationId: 'vapi_a', background: true, allowUnlinked: true }),
+      executeTool(tool('lookup_customer'), { customer_id: 'CUS-1001' }, store, { conversationId: 'vapi_b', background: true, allowUnlinked: true }),
     ]);
     await flushToolRecords();
     expect(store.toolCalls.map((c) => c.conversation_id).sort()).toEqual(['vapi_a', 'vapi_b']);

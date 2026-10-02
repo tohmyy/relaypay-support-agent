@@ -37,6 +37,19 @@ export interface ToolCallRecord {
   error?: string | null;
 }
 
+export interface TicketRecord {
+  ticket_id: string;
+  status: string;
+  /** False when an existing ticket was returned. */
+  created: boolean;
+}
+export interface TicketEscalation {
+  ticket_id: string;
+  escalation_id: string;
+  /** False when the conversation already had an open escalation and its pair was returned. */
+  created: boolean;
+}
+
 /** Who a conversation belongs to: set by the web app's link, read back here so tools can be scoped to that customer. */
 export interface ConversationIdentity {
   customer_id: string | null;
@@ -59,32 +72,42 @@ export interface Store {
   getConversationIdentity(conversationId: string): Promise<ConversationIdentity | null>;
   /** Name and email of a signed-in account (app_users). */
   getAppUser(userId: string): Promise<AppUserRow | null>;
-  getTransaction(transactionId: string): Promise<TransactionRow | null>;
-  findPayout(q: { payout_id?: string; transaction_id?: string }): Promise<PayoutRow | null>;
+  /** With `customerId` the customer predicate is part of the query: another customer's record is simply not found. */
+  getTransaction(transactionId: string, customerId?: string): Promise<TransactionRow | null>;
+  findPayout(
+    q: { payout_id?: string; transaction_id?: string },
+    customerId?: string,
+  ): Promise<PayoutRow | null>;
   customerExists(customerId: string): Promise<boolean>;
-  ticketExists(ticketId: string): Promise<boolean>;
   ensureConversation(conversationId: string): Promise<void>;
+  /** Logs a ticket once per conversation and summary: a repeat returns the existing ticket. */
   insertTicket(t: {
-    customer_id?: string;
+    customer_id: string;
     category: string;
     priority: string;
     summary: string;
     conversation_id: string;
-  }): Promise<string>;
-  insertEscalation(e: {
-    ticket_id?: string;
-    customer_id?: string;
-    user_name: string;
-    user_email: string;
+  }): Promise<TicketRecord>;
+  /**
+   * Creates the ticket and the escalation in one transaction, or returns the pair already open for the conversation
+   * (a ticket logged earlier in the conversation becomes the escalation's ticket).
+   */
+  createTicketAndEscalation(e: {
+    conversation_id: string;
+    customer_id: string;
+    ticket_category: string;
+    ticket_priority: string;
+    ticket_summary: string;
     category: string;
     reason: string;
+    user_name: string;
+    user_email: string;
     preferred_time?: string;
     /** The callback instant (UTC ISO) and the customer's IANA timezone. */
     preferred_at?: string;
     preferred_timezone?: string;
     contact_preference?: 'text_chat' | 'callback';
-    conversation_id?: string;
-  }): Promise<string>;
+  }): Promise<TicketEscalation>;
   insertEvent(e: {
     conversation_id: string;
     event_type: string;
@@ -132,36 +155,29 @@ export function createStore(db: SupabaseClient): Store {
       ) as AppUserRow[];
       return rows[0] ?? null;
     },
-    async getTransaction(id) {
-      const row = check(
-        await db
-          .from('transactions')
-          .select(
-            'transaction_id, customer_id, transaction_type, status, amount, currency, estimated_arrival, support_summary',
-          )
-          .eq('transaction_id', id)
-          .maybeSingle(),
-      );
-      return row as TransactionRow | null;
+    async getTransaction(id, customerId) {
+      let query = db
+        .from('transactions')
+        .select(
+          'transaction_id, customer_id, transaction_type, status, amount, currency, estimated_arrival, support_summary',
+        )
+        .eq('transaction_id', id);
+      if (customerId) query = query.eq('customer_id', customerId);
+      return check(await query.maybeSingle()) as TransactionRow | null;
     },
-    async findPayout(q) {
+    async findPayout(q, customerId) {
       let query = db
         .from('payouts')
         .select('payout_id, transaction_id, customer_id, status, scheduled_for, failure_reason');
       if (q.payout_id) query = query.eq('payout_id', q.payout_id);
       if (q.transaction_id) query = query.eq('transaction_id', q.transaction_id);
+      if (customerId) query = query.eq('customer_id', customerId);
       const rows = check(await query.order('scheduled_for', { ascending: false }).limit(1));
       return (rows as PayoutRow[])[0] ?? null;
     },
     async customerExists(id) {
       const rows = check(
         await db.from('customers').select('customer_id').eq('customer_id', id).limit(1),
-      );
-      return (rows as unknown[]).length > 0;
-    },
-    async ticketExists(id) {
-      const rows = check(
-        await db.from('support_tickets').select('ticket_id').eq('ticket_id', id).limit(1),
       );
       return (rows as unknown[]).length > 0;
     },
@@ -177,23 +193,35 @@ export function createStore(db: SupabaseClient): Store {
     },
     async insertTicket(t) {
       const row = check(
-        await db
-          .from('support_tickets')
-          .insert({ ...t, status: 'open' })
-          .select('ticket_id')
-          .single(),
+        await db.rpc('create_support_ticket_once', {
+          p_conversation_id: t.conversation_id,
+          p_customer_id: t.customer_id,
+          p_category: t.category,
+          p_priority: t.priority,
+          p_summary: t.summary,
+        }),
       );
-      return (row as { ticket_id: string }).ticket_id;
+      return row as TicketRecord;
     },
-    async insertEscalation(e) {
+    async createTicketAndEscalation(e) {
       const row = check(
-        await db
-          .from('escalations')
-          .insert({ ...e, status: 'open' })
-          .select('escalation_id')
-          .single(),
+        await db.rpc('create_ticket_and_escalation', {
+          p_conversation_id: e.conversation_id,
+          p_customer_id: e.customer_id,
+          p_category: e.ticket_category,
+          p_priority: e.ticket_priority,
+          p_summary: e.ticket_summary,
+          p_escalation_category: e.category,
+          p_reason: e.reason,
+          p_user_name: e.user_name,
+          p_user_email: e.user_email,
+          p_contact_preference: e.contact_preference ?? null,
+          p_preferred_time: e.preferred_time ?? null,
+          p_preferred_at: e.preferred_at ?? null,
+          p_preferred_timezone: e.preferred_timezone ?? null,
+        }),
       );
-      return (row as { escalation_id: string }).escalation_id;
+      return row as TicketEscalation;
     },
     async insertEvent(e) {
       check(await db.from('conversation_events').insert(e));

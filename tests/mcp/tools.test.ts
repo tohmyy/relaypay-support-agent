@@ -13,9 +13,13 @@ const tool = (name: string) => tools.find((t) => t.name === name)!;
 let store: FakeStore;
 beforeEach(() => {
   store = createFakeStore();
+  // Account tools only run for a conversation linked to a signed-in customer (CUS-1001 / user-1).
+  store.identities.set('vapi_linked', { customer_id: 'CUS-1001', user_id: 'user-1' });
 });
 
-const run = (name: string, input: unknown) => executeTool(tool(name), input, store);
+const linked = { conversationId: 'vapi_linked' };
+const run = (name: string, input: unknown, ctx: Parameters<typeof executeTool>[3] = linked) =>
+  executeTool(tool(name), input, store, ctx);
 
 describe('registry', () => {
   it('exposes exactly the six required tools', () => {
@@ -37,10 +41,9 @@ describe('input validation happens before any database access', () => {
     ['lookup_transaction', {}],
     ['lookup_transaction', { transaction_id: '' }],
     ['lookup_payout', {}],
-    ['create_support_ticket', { category: 'payout', priority: 'high', summary: 's' }],
     ['create_support_ticket', { category: 'nope', priority: 'high', summary: 's', conversation_id: 'c' }],
-    ['create_escalation', { user_name: 'A', category: 'account', reason: 'r' }],
-    ['create_escalation', { user_name: 'A', user_email: 'not-an-email', category: 'account', reason: 'r' }],
+    ['create_escalation', { category: 'account' }],
+    ['create_escalation', { category: 'nope', reason: 'r' }],
     ['log_conversation_event', { conversation_id: 'c', event_type: 'bad type!', summary: 's' }],
   ])('%s rejects %j', async (name, input) => {
     const result = await run(name, input);
@@ -98,60 +101,63 @@ describe('read tools', () => {
 });
 
 describe('write tools', () => {
-  it('creates a ticket with status open and creates the conversation first', async () => {
+  it('creates a ticket for the signed-in customer with status open and creates the conversation first', async () => {
     const r = await run('create_support_ticket', {
-      customer_id: 'CUS-1001',
       category: 'payout',
       priority: 'high',
       summary: 'Payout failed',
-      conversation_id: 'test-c1',
     });
     expect(r).toEqual({ ticket_id: 'TKT-000001', status: 'open' });
     expect(store.tickets).toHaveLength(1);
-    expect(store.conversations.has('test-c1')).toBe(true);
+    expect(store.tickets[0]).toMatchObject({ customer_id: 'CUS-1001', conversation_id: 'vapi_linked' });
+    expect(store.conversations.has('vapi_linked')).toBe(true);
   });
 
-  it('rejects unknown customers and tickets with a structured error', async () => {
-    expect(
-      await run('create_support_ticket', {
-        customer_id: 'CUS-9999',
-        category: 'other',
-        priority: 'low',
-        summary: 's',
-        conversation_id: 'test-c1',
-      }),
-    ).toMatchObject({ error: { code: 'reference_not_found' } });
-    expect(
-      await run('create_escalation', {
-        ticket_id: 'TKT-404',
-        user_name: 'A',
-        user_email: 'a@b.co',
-        category: 'account',
-        reason: 'r',
-      }),
-    ).toMatchObject({ error: { code: 'reference_not_found' } });
-    expect(store.tickets).toHaveLength(0);
-    expect(store.escalations).toHaveLength(0);
+  it('returns the same ticket when the same summary is logged again in a conversation', async () => {
+    const input = { category: 'payout', priority: 'high', summary: 'Payout failed', conversation_id: 'vapi_linked' };
+    const first = await run('create_support_ticket', input);
+    const again = await run('create_support_ticket', { ...input, summary: ' payout FAILED ' });
+    expect(again).toEqual(first);
+    expect(store.tickets).toHaveLength(1);
+    // A different summary is a different issue.
+    expect(await run('create_support_ticket', { ...input, summary: 'Invoice missing' })).toMatchObject({
+      ticket_id: 'TKT-000002',
+    });
   });
 
-  it('creates an escalation without echoing the email back', async () => {
+  it('creates ticket and escalation together without echoing the email back', async () => {
     const r = await run('create_escalation', {
-      ticket_id: 'TKT-000001',
-      customer_id: 'CUS-1001',
-      user_name: 'Amara',
-      user_email: 'amara@lagosledger.example',
       category: 'compliance',
       reason: 'Payout under review',
       preferred_at: soon(),
     });
-    expect(r).toMatchObject({ escalation_id: 'ESC-000001', status: 'open' });
+    expect(r).toMatchObject({ ticket_id: 'TKT-000001', escalation_id: 'ESC-000001', status: 'open' });
+    expect(store.tickets).toHaveLength(1);
+    expect(store.escalations[0]).toMatchObject({ ticket_id: 'TKT-000001', conversation_id: 'vapi_linked' });
     expect(JSON.stringify(r)).not.toContain('lagosledger');
   });
 
+  it('uses the ticket already logged in the conversation and is safe to repeat', async () => {
+    const ticket = (await run('create_support_ticket', {
+      category: 'payout',
+      priority: 'high',
+      summary: 'Payout failed',
+      conversation_id: 'vapi_linked',
+    })) as { ticket_id: string };
+    const input = { category: 'payment', reason: 'r', contact_preference: 'text_chat' };
+    const first = await run('create_escalation', input);
+    expect(first).toMatchObject({ ticket_id: ticket.ticket_id, escalation_id: 'ESC-000001' });
+    const again = await run('create_escalation', input);
+    expect(again).toMatchObject({ ticket_id: ticket.ticket_id, escalation_id: 'ESC-000001' });
+    expect(store.tickets).toHaveLength(1);
+    expect(store.escalations).toHaveLength(1);
+  });
+
   it('stores the request conversation id on the escalation and creates the conversation first', async () => {
+    store.identities.set('conv_ctx-1', { customer_id: 'CUS-1001', user_id: 'user-1' });
     const r = await executeTool(
       tool('create_escalation'),
-      { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r', preferred_at: soon() },
+      { category: 'account', reason: 'r', preferred_at: soon() },
       store,
       { conversationId: 'conv_ctx-1' },
     );
@@ -161,20 +167,13 @@ describe('write tools', () => {
   });
 
   it('records how the customer chose to be helped, and words the summary for a text chat', async () => {
-    const chat = await run('create_escalation', {
-      user_name: 'A',
-      user_email: 'a@b.co',
-      category: 'payment',
-      reason: 'r',
-      contact_preference: 'text_chat',
-    });
+    const chat = await run('create_escalation', { category: 'payment', reason: 'r', contact_preference: 'text_chat' });
     expect(store.escalations[0]).toMatchObject({ contact_preference: 'text_chat' });
     expect(JSON.stringify(chat)).toContain('text chat');
     expect(JSON.stringify(chat)).not.toContain('call you on');
 
+    store.escalations[0].status = 'closed';
     const callback = await run('create_escalation', {
-      user_name: 'A',
-      user_email: 'a@b.co',
       category: 'payment',
       reason: 'r',
       contact_preference: 'callback',
@@ -183,35 +182,19 @@ describe('write tools', () => {
     expect(JSON.stringify(callback)).toContain('contact details on your account');
   });
 
-  it('refuses an unknown contact preference and treats it as optional', async () => {
+  it('refuses an unknown contact preference', async () => {
     expect(
-      await run('create_escalation', {
-        user_name: 'A',
-        user_email: 'a@b.co',
-        category: 'payment',
-        reason: 'r',
-        contact_preference: 'smoke_signal',
-      }),
+      await run('create_escalation', { category: 'payment', reason: 'r', contact_preference: 'smoke_signal' }),
     ).toMatchObject({ error: { code: expect.any(String) } });
-    await run('create_escalation', {
-      user_name: 'A',
-      user_email: 'a@b.co',
-      category: 'payment',
-      reason: 'r',
-      preferred_at: soon(),
-    });
-    expect((store.escalations.at(-1) as { contact_preference?: string }).contact_preference).toBeUndefined();
+    expect(store.escalations).toHaveLength(0);
   });
 
-  it('leaves conversation_id unset when the request carries none', async () => {
-    await run('create_escalation', {
-      user_name: 'A',
-      user_email: 'a@b.co',
-      category: 'account',
-      reason: 'r',
-      preferred_at: soon(),
+  it('needs a conversation: with none there is no linked account and nothing is created', async () => {
+    expect(await run('create_escalation', { category: 'account', reason: 'r', preferred_at: soon() }, {})).toMatchObject({
+      error: { code: 'not_authorized' },
     });
-    expect(store.escalations[0]).toMatchObject({ conversation_id: undefined });
+    expect(store.escalations).toHaveLength(0);
+    expect(store.tickets).toHaveLength(0);
   });
 
   it('logs events and strips secret-looking metadata keys', async () => {
@@ -255,6 +238,7 @@ describe('failure handling', () => {
     await run('lookup_transaction', {});
     expect(store.toolCalls.map((c) => c.status)).toEqual(['success', 'not_found', 'failed']);
     expect(store.toolCalls[0].input_summary).toBe('email=<provided>');
+    expect(store.toolCalls[0].conversation_id).toBe('vapi_linked');
   });
 });
 

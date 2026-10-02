@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { canonicalizeIdentifiers } from './display';
 import { errorMessage, logEvent } from './logger';
 import type { HistoryTurn } from './prompt';
 import type { AnswerType } from './schema';
@@ -81,6 +82,9 @@ export async function saveTurn(
     turn_number: t.turnNumber,
     user_transcript: t.userMessage,
     assistant_response: t.response,
+    // The transcript shows the display form (reference numbers exact); the spoken form is what the customer heard.
+    display_text: canonicalizeIdentifiers(t.response),
+    spoken_text: t.response,
     answer_type: t.answerType,
     confidence_note: t.confidenceNote ?? null,
     latency_ms: t.latencyMs ?? null,

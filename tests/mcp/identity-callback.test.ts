@@ -16,7 +16,7 @@ beforeEach(() => {
   store = createFakeStore();
   // The web app's link has landed: the conversation belongs to CUS-1001 / user-1.
   store.identities.set('vapi_linked', { customer_id: 'CUS-1001', user_id: 'user-1' });
-  store.identities.set('vapi_other', { customer_id: 'CUS-2002', user_id: null });
+  store.identities.set('vapi_other', { customer_id: 'CUS-2002', user_id: 'user-2' });
   store.identities.set('vapi_unlinked', { customer_id: null, user_id: null });
 });
 
@@ -55,49 +55,55 @@ describe('identity: tools are scoped to the signed-in customer (AC-29.2)', () =>
     expect(await run('lookup_customer', { customer_id: 'CUS-2002' }, linked)).toEqual({ found: false });
   });
 
-  it('refuses a ticket for a different customer and fills in the signed-in one when omitted', async () => {
-    const bad = await run(
+  it('creates a ticket for the signed-in customer and ignores a customer id the model supplies', async () => {
+    const r = await run(
       'create_support_ticket',
       { customer_id: 'CUS-2002', category: 'payout', priority: 'low', summary: 's', conversation_id: 'vapi_linked' },
       linked,
     );
-    expect(bad).toMatchObject({ error: { code: 'not_authorized' } });
-    expect(store.tickets).toHaveLength(0);
-
-    await run('create_support_ticket', { category: 'payout', priority: 'low', summary: 's', conversation_id: 'vapi_linked' }, linked);
+    expect(r).toMatchObject({ ticket_id: 'TKT-000001', status: 'open' });
+    expect(store.tickets).toHaveLength(1);
     expect(store.tickets[0]).toMatchObject({ customer_id: 'CUS-1001' });
   });
 
-  it('refuses an escalation for a different customer', async () => {
+  it("ignores a customer id the model supplies on an escalation: it is the signed-in customer's", async () => {
     const r = await run(
       'create_escalation',
       { customer_id: 'CUS-2002', category: 'account', reason: 'r', contact_preference: 'text_chat' },
       linked,
     );
-    expect(r).toMatchObject({ error: { code: 'not_authorized' } });
-    expect(store.escalations).toHaveLength(0);
+    expect(r).toMatchObject({ escalation_id: 'ESC-000001' });
+    expect(store.escalations[0]).toMatchObject({ customer_id: 'CUS-1001' });
+    expect(store.tickets[0]).toMatchObject({ customer_id: 'CUS-1001' });
   });
 
-  it('refuses account tools for an unlinked conversation when sign-in is required (production)', async () => {
-    const ctx = { conversationId: 'vapi_unlinked', requireIdentity: true };
+  it('refuses account tools for an unlinked conversation, whatever the environment (no unscoped fallback)', async () => {
+    const ctx = { conversationId: 'vapi_unlinked' };
     for (const [name, input] of [
       ['lookup_customer', { customer_id: 'CUS-1001' }],
       ['lookup_transaction', { transaction_id: 'TXN-9001' }],
       ['lookup_payout', { payout_id: 'PAY-7001' }],
+      ['create_support_ticket', { category: 'payout', priority: 'low', summary: 's', conversation_id: 'vapi_unlinked' }],
+      ['create_escalation', { category: 'account', reason: 'r', contact_preference: 'text_chat' }],
     ] as const) {
       expect(await run(name, input, ctx)).toMatchObject({ error: { code: 'not_authorized' } });
     }
     // No conversation at all is no identity either.
-    expect(await run('lookup_transaction', { transaction_id: 'TXN-9001' }, { requireIdentity: true })).toMatchObject({
+    expect(await run('lookup_transaction', { transaction_id: 'TXN-9001' }, {})).toMatchObject({
       error: { code: 'not_authorized' },
     });
-    expect(store.calls).not.toContain('getTransaction');
+    expect(store.calls).toEqual([]);
+    expect(store.tickets).toHaveLength(0);
+    expect(store.escalations).toHaveLength(0);
   });
 
-  it('still answers an unlinked conversation when sign-in is not required (development)', async () => {
-    expect(await run('lookup_transaction', { transaction_id: 'TXN-9001' }, { conversationId: 'vapi_unlinked' })).toMatchObject({
-      found: true,
+  it('lets only an explicit test context run read-only tools unlinked, never tools that create records', async () => {
+    const ctx = { conversationId: 'vapi_unlinked', allowUnlinked: true };
+    expect(await run('lookup_transaction', { transaction_id: 'TXN-9001' }, ctx)).toMatchObject({ found: true });
+    expect(await run('create_escalation', { category: 'account', reason: 'r', contact_preference: 'text_chat' }, ctx)).toMatchObject({
+      error: { code: 'not_authorized' },
     });
+    expect(store.escalations).toHaveLength(0);
   });
 
   it('fails closed when the link cannot be read', async () => {
@@ -118,7 +124,7 @@ describe('escalation contact details come from the account (AC-41.1)', () => {
     });
   });
 
-  it('overrides a wrong name and email supplied by the model', async () => {
+  it('ignores a wrong name and email supplied by the model', async () => {
     await run(
       'create_escalation',
       {
@@ -133,12 +139,16 @@ describe('escalation contact details come from the account (AC-41.1)', () => {
     expect(store.escalations[0]).toMatchObject({ user_name: 'Amara Okafor', user_email: 'amara@lagosledger.example' });
   });
 
-  it('needs typed contact details only when no account is linked (and says so)', async () => {
-    const r = await run('create_escalation', { category: 'account', reason: 'r', contact_preference: 'text_chat' }, {
-      conversationId: 'vapi_unlinked',
-    });
-    expect(r).toMatchObject({ error: { code: 'invalid_input' } });
+  it('never takes contact details from the model when no account is linked: nothing is created (AC-52.2)', async () => {
+    const r = await run(
+      'create_escalation',
+      { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r', contact_preference: 'text_chat' },
+      { conversationId: 'vapi_unlinked' },
+    );
+    expect(r).toMatchObject({ error: { code: 'not_authorized' } });
+    expect(JSON.stringify(r)).not.toMatch(/a@b\.co/);
     expect(store.escalations).toHaveLength(0);
+    expect(store.tickets).toHaveLength(0);
   });
 });
 

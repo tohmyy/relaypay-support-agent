@@ -48,7 +48,7 @@ export function formatHistory(history: HistoryTurn[]): string {
     .join('\n\n');
 }
 
-/** The verified identity block. The email is for escalation contact only; the assistant never reads it aloud. */
+/** The verified identity block. The assistant never reads the email aloud and never passes it to a tool: contact details are resolved from the account. */
 export function formatAuthenticated(c: AuthenticatedCustomer): string {
   const lines = [`customer_id: ${escapeBlock(c.customerId)}`];
   if (c.displayName) lines.push(`display_name: ${escapeBlock(c.displayName)}`);

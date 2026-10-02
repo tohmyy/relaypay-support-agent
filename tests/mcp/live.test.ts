@@ -11,8 +11,9 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
   const store = live ? createStore(db) : null!;
   const startedAt = new Date().toISOString();
   const conversationId = `test-${Date.now()}`;
+  // Read-only lookups may run unlinked here; tools that create records need a linked conversation (see below).
   const call = (name: string, input: unknown, ctx?: { conversationId?: string }) =>
-    executeTool(tools.find((t) => t.name === name)!, input, store, ctx);
+    executeTool(tools.find((t) => t.name === name)!, input, store, { allowUnlinked: true, ...ctx });
 
   afterAll(async () => {
     if (!live) return;
@@ -78,32 +79,40 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
     });
   });
 
-  it('creates a ticket, an escalation linked to it, and an event', async () => {
+  // Needs migration 20261007000017 applied and a seeded customer sign-in (npm run db:seed-users).
+  it('creates a ticket and an escalation together for the linked customer, and an event', async () => {
+    const { data: users } = await db
+      .from('app_users')
+      .select('id, customer_id')
+      .eq('role', 'customer')
+      .not('customer_id', 'is', null)
+      .limit(1);
+    const owner = users?.[0];
+    if (!owner) return;
+    await store.ensureConversation(conversationId);
+    await db.from('conversations').update({ customer_id: owner.customer_id, user_id: owner.id }).eq('conversation_id', conversationId);
+
     const ticket = (await call('create_support_ticket', {
-      customer_id: 'CUS-1004',
       category: 'payout',
       priority: 'high',
       summary: 'Payout PAY-7003 failed (integration test)',
       conversation_id: conversationId,
-    })) as { ticket_id: string; status: string };
+    }, { conversationId })) as { ticket_id: string; status: string };
     expect(ticket.ticket_id).toMatch(/^TKT-\d{6}$/);
     expect(ticket.status).toBe('open');
     const { data: row } = await db.from('support_tickets').select('*').eq('ticket_id', ticket.ticket_id).single();
-    expect(row).toMatchObject({ conversation_id: conversationId, customer_id: 'CUS-1004', status: 'open' });
+    expect(row).toMatchObject({ conversation_id: conversationId, customer_id: owner.customer_id, status: 'open' });
 
     const esc = (await call('create_escalation', {
-      ticket_id: ticket.ticket_id,
-      customer_id: 'CUS-1004',
-      user_name: 'Test User',
-      user_email: 'test-live@example.com',
       category: 'payment',
       reason: 'Integration test',
       preferred_at: new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString(),
-    }, { conversationId })) as { escalation_id: string; status: string };
+    }, { conversationId })) as { ticket_id: string; escalation_id: string; status: string };
     expect(esc.escalation_id).toMatch(/^ESC-\d{6}$/);
+    expect(esc.ticket_id).toBe(ticket.ticket_id);
     expect(esc.status).toBe('open');
     const { data: erow } = await db.from('escalations').select('*').eq('escalation_id', esc.escalation_id).single();
-    expect(erow).toMatchObject({ ticket_id: ticket.ticket_id, customer_id: 'CUS-1004', status: 'open', conversation_id: conversationId });
+    expect(erow).toMatchObject({ ticket_id: ticket.ticket_id, customer_id: owner.customer_id, status: 'open', conversation_id: conversationId });
 
     expect(
       await call('log_conversation_event', {
@@ -118,15 +127,14 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
     expect(ev![0].metadata).toEqual({ step: 1 });
   });
 
-  it('rejects an unknown customer without writing anything', async () => {
+  it('refuses to create records for a conversation that is not linked, writing nothing', async () => {
     const r = await call('create_support_ticket', {
-      customer_id: 'CUS-9999',
       category: 'other',
       priority: 'low',
       summary: 'x',
-      conversation_id: conversationId,
-    });
-    expect(r).toMatchObject({ error: { code: 'reference_not_found' } });
+      conversation_id: `${conversationId}-unlinked`,
+    }, { conversationId: `${conversationId}-unlinked` });
+    expect(r).toMatchObject({ error: { code: 'not_authorized' } });
   });
 
   it('records tool_calls rows with statuses and no raw email', async () => {

@@ -14,7 +14,7 @@ let store: FakeStore;
 
 beforeAll(async () => {
   store = createFakeStore();
-  server = createHttpServer({ store, authToken: TOKEN });
+  server = createHttpServer({ store, authToken: TOKEN, allowUnlinked: true });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -82,14 +82,14 @@ describe('MCP over HTTP', () => {
     expect(store.conversations.has('conv_header-1')).toBe(true);
   });
 
-  it('prefers the conversation id in the tool input over the header', async () => {
+  it('prefers the conversation id in the header over the one in the tool input', async () => {
     const client = await connect(TOKEN, { 'X-Conversation-Id': 'conv_header-2' });
     await client.callTool({
       name: 'log_conversation_event',
       arguments: { conversation_id: 'conv_input-2', event_type: 'x', summary: 's' },
     });
     await client.close();
-    expect(store.toolCalls.at(-1)).toMatchObject({ conversation_id: 'conv_input-2' });
+    expect(store.toolCalls.at(-1)).toMatchObject({ conversation_id: 'conv_header-2' });
   });
 
   it('ignores malformed conversation headers', () => {

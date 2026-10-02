@@ -12,9 +12,14 @@ function reply(body: Record<string, unknown>, status: number) {
 
 /**
  * Whether this call breaks a limit once it is tied to the customer. The voice agent enforces the same limits on its
- * side and hangs up; this lets the page tell the customer straight away. A failed check never fails the link.
+ * side and hangs up; this lets the page tell the customer straight away. A check that cannot be made is reported as
+ * 'unavailable' (the link route then answers 503), never passed silently: the page retries, and the agent's link grace
+ * is the backstop.
  */
-async function limitBroken(customerId: string, conversationId: string): Promise<'active-session' | 'rate-limited' | null> {
+async function limitBroken(
+  customerId: string,
+  conversationId: string,
+): Promise<'active-session' | 'rate-limited' | 'unavailable' | null> {
   const limits = abuseLimitsFromEnv();
   try {
     if (limits.maxConcurrentSessions > 0) {
@@ -42,6 +47,7 @@ async function limitBroken(customerId: string, conversationId: string): Promise<
     }
   } catch (error) {
     console.error(`[web] session limit check failed: ${error instanceof Error ? error.message : String(error)}`);
+    return 'unavailable';
   }
   return null;
 }
@@ -52,7 +58,8 @@ async function limitBroken(customerId: string, conversationId: string): Promise<
  * and tells the page at once if the customer already has another active conversation or has started too many.
  *
  * Safe to repeat for the same customer; a call already tied to someone else is refused (409 conflict). Only customers
- * can link, and the customer id always comes from the server-side session, never from the request.
+ * can link, and the customer id always comes from the server-side session, never from the request. Both ids are written
+ * in one update, so a conversation is owned completely or not at all.
  */
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return reply({ error: 'forbidden' }, 403);
@@ -83,10 +90,13 @@ export async function POST(request: Request) {
     }
     // Linked (now or before). Say so even if a limit is broken: the agent needs the link to enforce it too.
     const broken = await limitBroken(user.customerId, id);
+    if (broken === 'unavailable') return reply({ error: 'unavailable' }, 503);
     if (broken === 'active-session') return reply({ linked: true, error: 'active-session' }, 409);
     if (broken === 'rate-limited') return reply({ linked: true, error: 'rate-limited' }, 429);
     return reply({ linked: true }, 200);
   } catch (error) {
+    // Only one active AI conversation per customer can exist (a unique index): losing that race is not an outage.
+    if (error instanceof Error && /(409)/.test(error.message)) return reply({ error: 'active-session' }, 409);
     console.error(`[web] link failed: ${error instanceof Error ? error.message : String(error)}`);
     return reply({ error: 'unavailable' }, 503);
   }

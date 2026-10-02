@@ -15,9 +15,9 @@ export const lookupTransaction: ToolDef<z.infer<typeof lookupTransactionSchema>>
   schema: lookupTransactionSchema,
   accountScoped: true,
   async run(input, store, ctx) {
-    const t = await store.getTransaction(input.transaction_id);
-    // Someone else's transaction looks exactly like a missing one.
-    if (!t || (ctx.identity && t.customer_id !== ctx.identity.customerId)) return { found: false };
+    // The customer predicate is part of the query, so someone else's transaction looks exactly like a missing one.
+    const t = await store.getTransaction(input.transaction_id, ctx.identity?.customerId);
+    if (!t) return { found: false };
     return {
       found: true,
       transaction_id: t.transaction_id,
