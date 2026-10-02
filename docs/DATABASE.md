@@ -6,6 +6,7 @@ Supabase Postgres. Migrations are plain SQL in `supabase/migrations/` and are ap
 |---|---|
 | `..._seed_tables.sql` | `customers`, `transactions`, `payouts` (text business keys are unique FK targets) |
 | `..._runtime_tables.sql` | `conversations`, `conversation_turns`, `retrieval_logs`, `tool_calls`, `support_tickets`, `escalations`, `evaluations` |
+| `..._app_users.sql` | `app_users` (sign-in accounts: email, scrypt hash, role, optional `customer_id`, display name, title, avatar, disabled flag) and `conversations.customer_id` / `user_id` (nullable; set when a signed-in customer's call is linked) |
 | `..._indexes_and_access.sql` | lookup indexes; RLS enabled on all tables with no policies; `anon`/`authenticated` revoked |
 
 - `conversation_events` (an 11th table, added in Phase 5) stores events from the MCP `log_conversation_event` tool.

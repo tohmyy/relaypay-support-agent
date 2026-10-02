@@ -28,6 +28,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | web server, agent, mcp | yes | Bypasses RLS; never in the browser |
+| `SESSION_SECRET` | web server | yes | 32+ characters. Signs the sign-in cookie. No default: without it nobody can sign in. See `docs/AUTH.md` |
 | `MCP_SERVER_URL` | web server, agent | no | URL |
 | `MCP_PORT`, `MCP_HOST` | mcp | no | Optional; default 4000 and 127.0.0.1 |
 | `MCP_SERVER_AUTH_TOKEN` | web server, agent, mcp | yes | Shared bearer token |
@@ -43,6 +44,7 @@ Read by `scripts/db/*` (`npm run db:*`), not by the app or services.
 |---|---|---|
 | `SUPABASE_DB_URL` | yes | Postgres connection string (Project Settings > Database); used by `db:migrate` and `db:seed` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | no | Optional; lets `db:verify` check the anon key cannot read tables |
+| `DEMO_USER_PASSWORD` | yes | 10+ characters; the shared password of the demo accounts created by `db:seed-users`. Stored only as a salted hash |
 
 ## Web preview
 

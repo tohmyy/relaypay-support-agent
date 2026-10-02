@@ -94,6 +94,16 @@ it moves to the confirmation only after the form is submitted. A full accessibil
 - `tests/web/route.test.ts` and `tests/web/state-route.live.test.ts`: the state route with a fake and with the real
   database.
 
+## Signed-in area (Iterations 6 and 7)
+
+`/` stays the pure support console (anonymous, unchanged). The RelayPay shell is a separate area with its own routes:
+customers use `/dashboard`, `/payments`, `/payouts`, `/invoices`, `/support`, `/settings`; staff use `/staff`.
+This resolves the tension with `docs/UI-SPEC.md` section 6 (the support experience should not feel like a multi-page SaaS
+dashboard): the console itself is not turned into a dashboard, and the dashboard pages only link into it.
+`/support` renders the same voice experience inside the shell (without its own header) and ties each real call to the
+signed-in customer. Customer wording lives in `lib/shell-copy.ts` (`SHELL_COPY`, held to the same vocabulary rule as
+`COPY`); staff wording is kept in `STAFF_COPY` in the same file. See `docs/AUTH.md`.
+
 ## Known limits
 
 - The live microphone path (real Vapi call from the browser) has not been exercised in automation; it needs a person.

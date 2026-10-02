@@ -2679,20 +2679,22 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 
 ## Authentication — beyond PRD minimum
 
-- [ ] Login
-- [ ] Logout
-- [ ] Session persistence
-- [ ] Customer role
-- [ ] Support agent role
-- [ ] Admin role
-- [ ] Route protection
-- [ ] Authorization
+Built self-contained (`docs/AUTH.md`): own `app_users` table, scrypt hashes, signed session cookie.
+
+- [x] Login
+- [x] Logout
+- [x] Session persistence (8-hour signed cookie)
+- [x] Customer role
+- [x] Support agent role
+- [x] Admin role
+- [x] Route protection (`proxy.ts` is a cookie-only first check; the real checks are in each page, route handler and action)
+- [x] Authorization (customers see only their own data; staff see the queue; linked conversations are readable only by their owner and staff)
 
 ## Product Shell — beyond PRD minimum
 
-- [ ] Customer dashboard
-- [ ] Staff dashboard
-- [ ] Navigation
+- [x] Customer dashboard (overview, payments, payouts, invoices, support, settings; real seeded data)
+- [x] Staff dashboard (read-only queue and conversation view; messaging, assignment and closing are Iteration 5)
+- [x] Navigation
 - [x] Support page (`/` Phase 9 voice UI)
 - [ ] Floating support widget
 - [ ] Widget states
