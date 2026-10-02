@@ -1,4 +1,8 @@
-export type ErrorCode = 'invalid_input' | 'reference_not_found' | 'temporarily_unavailable';
+export type ErrorCode =
+  | 'invalid_input'
+  | 'reference_not_found'
+  | 'not_authorized'
+  | 'temporarily_unavailable';
 
 /** An error whose message is safe to show to the caller. */
 export class ToolError extends Error {

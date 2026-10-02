@@ -5,13 +5,16 @@ import { AckRotation, chooseAckCategory, type TurnProgress } from './acks';
 import type { TurnInput, TurnResult } from './agent';
 import { recordTurnTimings } from './history';
 import { errorMessage, logEvent } from './logger';
+import type { ReadyResponse } from './ready';
 import type { SessionController, TurnDecision } from './session/controller';
+import { reopenConversation } from './session/persist';
 import { TurnTimer } from './timing';
 import {
   completionJson,
   extractCallId,
   extractUserMessage,
   handleVapiEvent,
+  resolveConversationId,
   resolveFromChatBody,
   SAFE_SPOKEN_ERROR,
   SSE_DONE,
@@ -20,6 +23,8 @@ import {
 import type { WarmPool } from './warm';
 
 const MAX_BODY_BYTES = 256 * 1024;
+/** Same cap the agent applies to any customer message. */
+const MAX_TEXT_CHARS = 2000;
 export const DEFAULT_FILLER_AFTER_MS = 2500;
 
 export interface AgentServerOptions {
@@ -36,6 +41,8 @@ export interface AgentServerOptions {
   warm?: Pick<WarmPool, 'warm' | 'release' | 'dispose'>;
   /** Phrase rotation for the spoken acknowledgements. Defaults to a fresh one. */
   acks?: AckRotation;
+  /** Dependency readiness for GET /ready (MCP + database). Absent means /ready reports ready. */
+  ready?: () => Promise<ReadyResponse>;
 }
 
 function sameSecret(provided: string | undefined, expected: string): boolean {
@@ -107,6 +114,7 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     callId: string | undefined,
     timer: TurnTimer,
     progress: TurnProgress,
+    textOnly = false,
   ): Promise<Answered> {
     const session = opts.session;
     try {
@@ -116,7 +124,7 @@ export function createAgentServer(opts: AgentServerOptions): Server {
         // Deterministic session control first: time limit, "that's all", an ended call. No model call for these.
         const decision: TurnDecision = session
           ? await timer.span('controller_ms', () =>
-              session.beforeTurn({ conversationId, callId, userMessage }),
+              session.beforeTurn({ conversationId, callId, userMessage, textOnly }),
             )
           : { kind: 'proceed' };
         if (decision.kind === 'reply')
@@ -240,6 +248,59 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     persistTimings(conversationId, answered, timer);
   }
 
+  /**
+   * A typed turn for a customer who cannot use a microphone (docs/BUILD-PLAN-V3.md V3.12). Same turn path as a voice turn
+   * (per-conversation queue, Session Controller, history, budgets), minus the call. Called by the web server only, with
+   * the same bearer token as the custom-LLM endpoint; the web server has already authenticated the customer and linked
+   * the conversation to them. Not retried automatically: running a turn twice would answer, and bill, twice.
+   */
+  async function textTurn(req: IncomingMessage, res: ServerResponse) {
+    let body: { conversationId?: unknown; message?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch (error) {
+      const tooLarge = error instanceof RangeError;
+      return sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'body too large' : 'invalid JSON' });
+    }
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const message = typeof body?.message === 'string' ? body.message.trim() : '';
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(conversationId)) return sendJson(res, 400, { error: 'conversation id required' });
+    if (!message) return sendJson(res, 400, { error: 'message required' });
+    if (message.length > MAX_TEXT_CHARS) return sendJson(res, 413, { error: 'message too long' });
+
+    const timer = new TurnTimer();
+    const answered = await answer(conversationId, message, undefined, timer, {}, true);
+    persistTimings(conversationId, answered, timer);
+    const ended = opts.session?.phaseOf(conversationId) === 'ended';
+    return sendJson(res, 200, { response: answered.text, ended });
+  }
+
+  /**
+   * Reopens a conversation that ended within the grace period (docs/BUILD-PLAN-V3.md V3.14). Called by the web server
+   * after it has authenticated the customer; the customer id it sends is the owner the conversation must belong to.
+   */
+  async function resumeConversation(req: IncomingMessage, res: ServerResponse) {
+    let body: { conversationId?: unknown; customerId?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      return sendJson(res, 400, { error: 'invalid JSON' });
+    }
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const customerId = typeof body?.customerId === 'string' && body.customerId ? body.customerId : null;
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(conversationId)) return sendJson(res, 400, { error: 'conversation id required' });
+    if (!opts.session && !opts.db) return sendJson(res, 404, { error: 'not found' });
+    try {
+      const result = opts.session
+        ? await opts.session.reopen(conversationId, customerId)
+        : await reopenConversation(opts.db!, conversationId, { customerId });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      logTechnical('resume failed', error, conversationId);
+      return sendJson(res, 500, { error: 'internal error' });
+    }
+  }
+
   async function vapiEvents(req: IncomingMessage, res: ServerResponse) {
     if (!opts.webhookSecret || !opts.db) return sendJson(res, 404, { error: 'not found' });
     const secret = req.headers['x-vapi-secret'];
@@ -253,8 +314,19 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       return sendJson(res, 400, { error: 'invalid JSON' });
     }
     try {
-      const result = await handleVapiEvent(opts.db, payload);
       const message = (payload as { message?: Record<string, unknown> } | null)?.message;
+      // The earlier call of a conversation that was resumed: its end-of-call report must not end the conversation again.
+      const reportedCall = (message?.call as { id?: unknown } | undefined)?.id;
+      const staleConversation = resolveConversationId({ call: message?.call as never });
+      if (
+        message?.type === 'end-of-call-report' &&
+        staleConversation &&
+        typeof reportedCall === 'string' &&
+        opts.session?.isStaleCallReport(staleConversation, reportedCall)
+      ) {
+        return sendJson(res, 200, { ok: true });
+      }
+      const result = await handleVapiEvent(opts.db, payload);
       if (message && result.conversationId) {
         // A call starting: get its agent process ready before the first question. A call ending: let go of it, and
         // forget which acknowledgement phrases it heard.
@@ -277,10 +349,47 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       const path = (req.url ?? '').split('?')[0];
       if (req.method === 'GET' && path === '/health') return sendJson(res, 200, { ok: true });
 
+      if (req.method === 'GET' && path === '/ready') {
+        if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
+          return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
+        }
+        let report: ReadyResponse;
+        try {
+          report = opts.ready
+            ? await opts.ready()
+            : { ok: true, checks: { mcp: { ok: true }, db: { ok: true } } };
+        } catch (error) {
+          logTechnical('ready check', error);
+          report = {
+            ok: false,
+            checks: { mcp: { ok: false, error: 'failed' }, db: { ok: false, error: 'failed' } },
+          };
+        }
+        return sendJson(res, report.ok ? 200 : 503, report);
+      }
+
       if (path === '/vapi/events') {
         if (req.method !== 'POST')
           return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
         return await vapiEvents(req, res);
+      }
+
+      if (path === '/text-turn') {
+        if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
+          return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
+        }
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        return await textTurn(req, res);
+      }
+
+      if (path === '/resume') {
+        if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
+          return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
+        }
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        return await resumeConversation(req, res);
       }
 
       if (path === '/chat/completions' || path === '/v1/chat/completions') {

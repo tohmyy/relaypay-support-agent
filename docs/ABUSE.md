@@ -65,10 +65,12 @@ calls. The raw events are in `conversation_events` (`limit_reached`, `human_hand
 
 ## Known limits
 
-- **Calls that do not come through a signed-in page cannot be limited per person.** The agent never sees the caller's address
-  (it sits behind Vapi) and the Vapi public key is in the browser, so a call started directly against it is unlinked: only the
-  global breaker and the per-conversation budgets apply. Closing this needs a
-  server-issued start token for each call or controls on the Vapi side; neither is built.
+- **A call that does not come through a signed-in page is ended, not limited.** The agent never sees the caller's address
+  (it sits behind Vapi) and the Vapi public key is in the browser, so a call started directly against it is unlinked. Since
+  Build Plan V3 (V3.7) the agent ends any call still not linked to a customer after `LINK_GRACE_SECONDS` (default 10;
+  `AGENT_REQUIRE_LINK`, on by default in production), so only the greeting and the first seconds are spoken. A server-issued,
+  signed start token per call is still not built; `POST /api/support/start` applies the customer's limits before the call
+  starts, and the link plus this grace period is what enforces ownership.
 - The web link check is a convenience: a customer who calls Vapi directly still meets the agent's checks on their first turn.
 - A very short call that never sends a turn is not stopped by the turn-time checks (it ends by silence or the time limit).
 - Defaults have not been tuned against real traffic.

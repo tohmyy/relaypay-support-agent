@@ -13,6 +13,7 @@ server log.
 | Session lifecycle events | `conversation_events`: `silence_warning` (`countdown_seconds`), `session_warning` (`seconds_left`), `session_ended` (`end_reason`, `final_status`, `duration_seconds`) | Session Controller, `endConversation` |
 | Where a turn's time went | **`conversation_turns.timings`** (JSON: queue, controller, history, retrieval, agent start, model, tools, save, first reply byte, acknowledgement, pre-start) and `vapi_latency_ms` in the `call_ended` event (Vapi's own averages, if its report carries them); see `docs/PERFORMANCE.md` | agent server, `runTurn`, Vapi report |
 | Voice interaction | `voice_stats` event, once per call: `interruptions`, `short_interruptions` (under half a second, a rough noise indicator), `undelivered_replies`, `silence_warnings`; `timings.delivered` / `client_closed_ms` per turn. `npm run report` shows them in its **Voice** section | Session Controller, agent server |
+| Readiness and retries | Agent `GET /ready` returns per-dependency `ok` and `ms`. The web server logs a line for each automatic retry: `[web] retry operation=<ready, start, link, state-poll or agent-ready> attempt=<1 or 2> outcome=<retrying or failed> class=<transient or permanent> ms=<n>`. A call ended because no customer was linked records a `conversation_events` row `unlinked_call` and `end_reason = error` | agent, web server |
 | Human handoff and limits | `conversation_events`: `human_handoff` (`reason`: `escalation` or `limit-reached`), `human_closed` (`closed_by`), `limit_reached` (`kind`, `limit`, `value`; kinds: `agent_calls`, `tool_calls`, `retrievals`, `concurrent_sessions`, `session_rate`, `global_session_rate`); `conversations.support_mode`, `assigned_staff_id`; `end_reason = limit-reached` / `human-closed`. `npm run report` shows them in its **Limits and handoffs** section (see `docs/ABUSE.md`) | Session Controller, web staff routes |
 | Last activity | **`conversations.last_activity_at`**, stamped on each stored turn and at session end | agent |
 | User and assistant turns | `conversation_turns` (transcript, reply, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**) | agent |
@@ -90,5 +91,8 @@ select * from tool_calls where status = 'failed' order by created_at desc;
 - Browser-side problems (for example a refused microphone) are shown to the customer but not reported to the server.
 - A call that ends without a webhook (tunnel down) stays open in `conversations` with no `ended_at`; the report shows
   these as "still open".
+- Staff see the estimate in the console (Build Plan V3, V3.13): **Est. cost** per conversation in the queue and on the
+  conversation page, and **Estimated cost today** (conversations started since midnight UTC). It is the sum of
+  `conversation_turns.cost_usd`; Vapi's own `call_ended` cost is not mixed in.
 - Model cost is the SDK's estimate, not a bill. Vapi's own cost is stored only as reported in its end-of-call report.
 - Running `mcp:dev` and `agent:dev` from before this change do not write the new fields; restart them.

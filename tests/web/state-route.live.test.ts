@@ -2,6 +2,10 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createSupabase } from '../../services/mcp/src/db/client';
 
 vi.mock('server-only', () => ({}));
+// The route only answers the signed-in owner of a call (or staff).
+vi.mock('@/lib/auth/dal', () => ({
+  getCurrentUser: async () => ({ id: 'u-live', role: 'customer', customerId: 'CUS-1001' }),
+}));
 
 const live = !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -26,6 +30,7 @@ describe.skipIf(!live)('conversation state route (live Supabase)', () => {
 
   it('follows a call from nothing, to a clarification, to a ticket, to an escalation, to the end', async () => {
     // Needs migration 20261001000008 (end_reason) applied to the database under test.
+    // Nothing recorded yet (and a call tied to nobody) answers like an unknown id.
     expect((await state()).body).toMatchObject({
       answerType: null,
       ticketReference: null,
@@ -35,7 +40,7 @@ describe.skipIf(!live)('conversation state route (live Supabase)', () => {
       startedAt: null,
     });
 
-    await db.from('conversations').insert({ conversation_id: id, channel: 'voice' });
+    await db.from('conversations').insert({ conversation_id: id, channel: 'voice', customer_id: 'CUS-1001' });
     await db.from('conversation_turns').insert({
       conversation_id: id,
       turn_number: 1,

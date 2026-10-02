@@ -2,7 +2,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ContactForm from '@/components/ContactForm';
 import ConversationTranscript from '@/components/ConversationTranscript';
 import ErrorState from '@/components/ErrorState';
 import EscalationPanel from '@/components/EscalationPanel';
@@ -94,49 +93,8 @@ describe('VoiceVisualizer', () => {
   });
 });
 
-describe('ContactForm', () => {
-  it('shows inline errors, focuses the first problem and sends nothing', async () => {
-    const onSubmit = vi.fn();
-    const user = userEvent.setup();
-    render(<ContactForm onSubmit={onSubmit} />);
-    await user.click(screen.getByRole('button', { name: COPY.buttons.requestSupport }));
-    expect(screen.getByText(COPY.escalation.nameRequired)).toBeTruthy();
-    expect(screen.getByText(COPY.escalation.emailRequired)).toBeTruthy();
-    expect(document.activeElement).toBe(screen.getByLabelText(COPY.escalation.name));
-    expect(screen.getByLabelText(COPY.escalation.name).getAttribute('aria-invalid')).toBe('true');
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  it('rejects an invalid email', async () => {
-    const user = userEvent.setup();
-    render(<ContactForm onSubmit={() => {}} />);
-    await user.type(screen.getByLabelText(COPY.escalation.name), 'Ada');
-    await user.type(screen.getByLabelText(COPY.escalation.email), 'ada@');
-    await user.click(screen.getByRole('button', { name: COPY.buttons.requestSupport }));
-    expect(screen.getByText(COPY.escalation.emailInvalid)).toBeTruthy();
-  });
-
-  it('submits valid details; the callback time is optional', async () => {
-    const onSubmit = vi.fn();
-    const user = userEvent.setup();
-    render(<ContactForm onSubmit={onSubmit} />);
-    await user.type(screen.getByLabelText(COPY.escalation.name), 'Ada Lovelace');
-    await user.type(screen.getByLabelText(COPY.escalation.email), 'ada@example.com');
-    await user.click(screen.getByRole('button', { name: COPY.buttons.requestSupport }));
-    expect(onSubmit).toHaveBeenCalledWith({ name: 'Ada Lovelace', email: 'ada@example.com', preferredTime: '' });
-  });
-
-  it('labels every field and describes the optional time', () => {
-    render(<ContactForm onSubmit={() => {}} />);
-    for (const label of [COPY.escalation.name, COPY.escalation.email, COPY.escalation.callbackTime]) {
-      expect(screen.getByLabelText(label)).toBeTruthy();
-    }
-    expect(screen.getByLabelText(COPY.escalation.callbackTime).getAttribute('aria-describedby')).toBe('contact-time-hint');
-  });
-});
-
 describe('ErrorState', () => {
-  it.each(['connection', 'microphone', 'service', 'unsupported'] as ErrorKind[])('%s', async (kind) => {
+  it.each(['connection', 'microphone', 'no-microphone', 'service', 'unsupported', 'unavailable'] as ErrorKind[])('%s', async (kind) => {
     const onRetry = vi.fn();
     const user = userEvent.setup();
     render(<ErrorState kind={kind} onRetry={onRetry} />);
@@ -163,8 +121,11 @@ describe('ConversationTranscript', () => {
     const items = within(log).getAllByRole('listitem');
     expect(items[0].textContent).toContain(COPY.conversation.you);
     expect(items[1].textContent).toContain(COPY.conversation.support);
-    expect(items[1].className).toContain('bg-accent-soft');
-    expect(items[0].className).not.toContain('bg-accent-soft');
+    // One chat bubble per turn: the customer's on the right, support's on the left.
+    expect(items[0].className).toContain('bg-accent-soft');
+    expect(items[0].className).toContain('ml-auto');
+    expect(items[1].className).not.toContain('bg-accent-soft');
+    expect(items[1].className).toContain('mr-auto');
   });
 
   it('shows an empty state', () => {
@@ -173,27 +134,29 @@ describe('ConversationTranscript', () => {
   });
 });
 
-describe('EscalationPanel', () => {
-  it('asks for details while a specialist is required, but only while the call is open', () => {
-    const { rerender } = render(<EscalationPanel support="escalation-required" requestedTime={null} canSubmit onSubmit={() => {}} />);
+describe('EscalationPanel (no form: details come from the account, the time is agreed in conversation)', () => {
+  it('explains what happens while a specialist is needed, and asks for nothing', () => {
+    const { container } = render(<EscalationPanel support="escalation-required" requestedTime={null} />);
     expect(screen.getByRole('heading', { name: COPY.escalation.heading })).toBeTruthy();
-    expect(screen.getByRole('button', { name: COPY.buttons.requestSupport })).toBeTruthy();
-    rerender(<EscalationPanel support="escalation-required" requestedTime={null} canSubmit={false} onSubmit={() => {}} />);
-    expect(screen.queryByRole('button', { name: COPY.buttons.requestSupport })).toBeNull();
+    expect(screen.getByText(COPY.escalation.body)).toBeTruthy();
+    expect(screen.getByText(COPY.escalation.timeHint)).toBeTruthy();
+    // AC-41.2 / AC-18.1: no name, email or callback-time inputs, and nothing to submit.
+    expect(container.querySelectorAll('input, textarea, select, form, button')).toHaveLength(0);
   });
 
-  it('shows progress, then a confirmation with the requested (not scheduled) callback', () => {
-    const { rerender } = render(<EscalationPanel support="escalating" requestedTime={null} canSubmit onSubmit={() => {}} />);
-    expect(screen.getByRole('status').textContent).toContain(COPY.escalation.sending);
-    rerender(<EscalationPanel support="escalated" requestedTime="Tuesday at 2:00 PM" canSubmit onSubmit={() => {}} />);
+  it('shows a confirmation with the requested (not scheduled) callback', () => {
+    render(<EscalationPanel support="escalated" requestedTime="Tue, 6 Oct 2026, 2:00 pm (Africa/Lagos)" />);
     expect(screen.getByText(COPY.escalation.confirmed)).toBeTruthy();
-    expect(screen.getByText(`${COPY.escalation.requestedCallback}: Tuesday at 2:00 PM`)).toBeTruthy();
+    expect(screen.getByText(COPY.escalation.confirmedBody)).toBeTruthy();
+    expect(screen.getByText(`${COPY.escalation.requestedCallback}: Tue, 6 Oct 2026, 2:00 pm (Africa/Lagos)`)).toBeTruthy();
     expect(document.activeElement?.textContent).toBe(COPY.escalation.confirmed);
   });
 
   it('renders nothing for other support states', () => {
-    const { container } = render(<EscalationPanel support="normal" requestedTime={null} canSubmit onSubmit={() => {}} />);
-    expect(container.innerHTML).toBe('');
+    for (const support of ['normal', 'clarifying', 'ticket-created', 'completed'] as const) {
+      const { container } = render(<EscalationPanel support={support} requestedTime={null} />);
+      expect(container.innerHTML).toBe('');
+    }
   });
 });
 
@@ -208,7 +171,6 @@ describe('SupportWorkspace', () => {
     level: 0,
     onStart: () => {},
     onEnd: () => {},
-    onSubmitContact: () => {},
   };
 
   it('opens with identity, purpose, one action, topics and the privacy notice', () => {
@@ -219,6 +181,19 @@ describe('SupportWorkspace', () => {
     for (const topic of COPY.topics) expect(screen.getByText(topic)).toBeTruthy();
     expect(screen.getByText(COPY.privacyNotice)).toBeTruthy();
     expect(screen.queryByText(COPY.conversation.title)).toBeNull();
+  });
+
+  it('explains up front that the microphone is needed and the browser will ask (before Start)', () => {
+    render(<SupportWorkspace {...base} />);
+    expect(screen.getByText(COPY.microphone.heading + '.')).toBeTruthy();
+    expect(screen.getByTestId('mic-instruction').textContent).toContain(COPY.microphone.instruction);
+  });
+
+  it('offers a way to reach a specialist from the dashboard when support is unavailable', () => {
+    render(<SupportWorkspace {...base} voice={{ state: 'error', error: 'unavailable' }} />);
+    const link = screen.getByRole('link', { name: COPY.errorHelp.unavailable.linkLabel });
+    expect(link.getAttribute('href')).toBe('/dashboard');
+    expect(screen.getByRole('button', { name: COPY.errors.unavailable.action })).toBeTruthy();
   });
 
   it('explains when voice support cannot start', () => {
@@ -254,6 +229,18 @@ describe('SupportWorkspace', () => {
     expect(screen.getByRole('heading', { name: COPY.complete.headingWithRequest })).toBeTruthy();
     expect(screen.getByText(/Reference: TKT-000123/)).toBeTruthy();
     expect(screen.getByRole('button', { name: COPY.buttons.startAnother })).toBeTruthy();
+  });
+
+  it('has no contact or callback form anywhere in the support console (AC-41.2)', () => {
+    for (const support of ['escalation-required', 'escalated'] as const) {
+      const { container, unmount } = render(
+        <SupportWorkspace {...base} voice={{ state: 'listening' }} support={support} escalated={support === 'escalated'} />,
+      );
+      expect(container.querySelector('form')).toBeNull();
+      expect(container.querySelector('input[type="email"], input[name*="email" i], input[name*="name" i]')).toBeNull();
+      expect(screen.queryByLabelText(/preferred callback time/i)).toBeNull();
+      unmount();
+    }
   });
 
   it('uses no technical terms anywhere on screen', () => {

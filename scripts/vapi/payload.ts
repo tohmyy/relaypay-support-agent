@@ -28,6 +28,23 @@ export function credentialPayload(name: string, apiKey: string) {
  * server messages. Voice, transcriber and other settings are left as the user configured them.
  */
 export const SERVER_MESSAGES = ['status-update', 'speech-update', 'end-of-call-report'];
+
+/**
+ * Whether an assistant's serverMessages include everything the agent depends on. `speech-update` is the one that is
+ * easy to lose: without it silence detection and the end-after-goodbye hang-up quietly stop working.
+ */
+export function missingServerMessages(serverMessages: unknown): string[] {
+  const have = Array.isArray(serverMessages) ? serverMessages : [];
+  return SERVER_MESSAGES.filter((m) => !have.includes(m));
+}
+
+/** Throws when the patch about to be applied (or the one a dry run shows) would drop a required server message. */
+export function assertServerMessages(patch: { serverMessages?: unknown }): void {
+  const missing = missingServerMessages(patch.serverMessages);
+  if (missing.length > 0) {
+    throw new Error(`The assistant's serverMessages must include: ${missing.join(', ')}`);
+  }
+}
 /** Margin between the controller's own time limit and Vapi's independent backstop. */
 export const MAX_DURATION_MARGIN_SECONDS = 10;
 /** Vapi's silence timeout is set high so the Session Controller (silence + countdown) is the authority. */

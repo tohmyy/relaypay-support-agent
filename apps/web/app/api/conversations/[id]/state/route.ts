@@ -11,7 +11,7 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
  * end reason and the session timing the UI counts down against.
  * Unknown ids return the same neutral state as a call with nothing recorded, so ids cannot be probed. A call that
  * has been tied to a customer account (see /api/support/link) is readable only by that customer and by staff; anyone
- * else gets the same neutral state. A call tied to nobody is public by id, exactly as before.
+ * else gets the same neutral state, and so does a call tied to nobody (there are no anonymous callers).
  */
 export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -26,20 +26,21 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
       restSelect<ConversationRows['escalations'][number]>('escalations', `select=preferred_time,contact_preference&${c}&order=created_at.desc&limit=1`),
       restSelect<ConversationRows['conversation'][number]>('conversations', `select=ended_at,end_reason,started_at,final_status,customer_id,support_mode,assigned_staff_id&${c}&limit=1`),
     ]);
+    // Every real call belongs to a signed-in customer (docs/AUTH.md), so a call tied to nobody yet (the moment before
+    // the browser links it) answers like an unknown id; the page simply keeps polling until the link lands.
     const linked = conversation[0]?.customer_id ?? null;
-    if (linked) {
-      const user = await getCurrentUser();
-      const allowed =
-        user !== null &&
-        canAccessConversation(user, {
-          customer_id: linked,
-          ended_at: conversation[0].ended_at,
-          final_status: conversation[0].final_status ?? null,
-          support_mode: conversation[0].support_mode ?? null,
-          assigned_staff_id: conversation[0].assigned_staff_id ?? null,
-        });
-      if (!allowed) return Response.json(NEUTRAL_STATE, { headers: NO_STORE });
-    }
+    if (!linked) return Response.json(NEUTRAL_STATE, { headers: NO_STORE });
+    const user = await getCurrentUser();
+    const allowed =
+      user !== null &&
+      canAccessConversation(user, {
+        customer_id: linked,
+        ended_at: conversation[0].ended_at,
+        final_status: conversation[0].final_status ?? null,
+        support_mode: conversation[0].support_mode ?? null,
+        assigned_staff_id: conversation[0].assigned_staff_id ?? null,
+      });
+    if (!allowed) return Response.json(NEUTRAL_STATE, { headers: NO_STORE });
     return Response.json(
       toPublicState({ turns, tickets, escalations, conversation }, { limits: sessionLimitsFromEnv() }),
       { headers: NO_STORE },

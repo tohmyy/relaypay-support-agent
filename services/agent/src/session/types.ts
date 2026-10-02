@@ -61,6 +61,14 @@ export interface SessionConfig {
   countdownSeconds: number;
   /** Mode B: after an escalation, stop the call and continue as a text chat with staff (signed-in customers only). */
   humanHandoff: boolean;
+  /**
+   * Every call must belong to a signed-in customer (docs/AUTH.md). When on, a call still not linked to a customer after
+   * `linkGraceSeconds` is ended politely. Off by default in the library and in development so anonymous test calls work;
+   * the running service turns it on in production (session/config.ts).
+   */
+  requireLink: boolean;
+  /** How long the web app has to link a new call to the signed-in customer. */
+  linkGraceSeconds: number;
   limits: AbuseLimits;
 }
 
@@ -70,6 +78,8 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   silenceSeconds: 15,
   countdownSeconds: 10,
   humanHandoff: false,
+  requireLink: false,
+  linkGraceSeconds: 10,
   // Off here so the library default and the tests do not depend on a database; the running service takes its limits
   // from the environment (see session/config.ts), where they are on by default.
   limits: NO_LIMITS,
@@ -90,6 +100,12 @@ export const SESSION_TEXT = {
     "This request needs a support specialist. I'm connecting you now, and they will continue by text in this window.",
   concurrent: 'You already have an active support conversation. Please use that one. Goodbye.',
   rateLimited: "We're getting a lot of requests right now. Please try again in a little while. Goodbye.",
+  /** Ended because no signed-in customer ever claimed the call. */
+  notSignedIn:
+    "I couldn't confirm that you're signed in, so I can't continue this conversation. Please sign in and start again. Goodbye.",
+  /** Several turns in a row could not be understood: end politely. */
+  lowConfidence:
+    "I'm sorry, I'm having trouble understanding you, so I'll end this call for now. Please try again, or type your message instead. Goodbye.",
   /** The line stored in the conversation when it moves to a person (shown to the customer and to staff). */
   handoffNotice:
     "You're being connected to a support specialist. This voice conversation has ended, and a RelayPay support specialist will continue helping you here by text.",

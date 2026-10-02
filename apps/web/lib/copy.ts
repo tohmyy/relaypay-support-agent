@@ -1,3 +1,4 @@
+import type { PublicEndReason } from './conversation-state';
 import type { ErrorKind, VoiceState } from './voice/state';
 
 /**
@@ -54,7 +55,7 @@ export const COPY = {
     connecting: 'Connecting…',
     end: 'End conversation',
     startAnother: 'Start another conversation',
-    requestSupport: 'Request support',
+    viewTranscript: 'View transcript',
     tryAgain: 'Try again',
     checkMicrophone: 'Check microphone access',
   },
@@ -64,21 +65,14 @@ export const COPY = {
     support: 'RelayPay Support',
     empty: 'Your conversation will appear here.',
     transcriptLabel: 'Conversation transcript',
-    detailsSent: 'Contact details sent to RelayPay Support.',
   },
   escalation: {
     heading: 'A support specialist needs to assist you',
-    body: "We'll collect a few details so the team can follow up with you.",
-    name: 'Name',
-    email: 'Email',
-    callbackTime: 'Preferred callback time',
-    callbackHint: 'Optional. For example, Tuesday at 2:00 PM.',
-    nameRequired: 'Enter your name.',
-    emailRequired: 'Enter your email address.',
-    emailInvalid: 'Enter a valid email address.',
-    sending: 'Sending your request…',
+    // No form: contact details come from the signed-in account, and a callback time is agreed in the conversation.
+    body: "We'll use the contact details on your account, so there is nothing to fill in.",
+    timeHint: 'To arrange a callback, tell RelayPay Support the day and time you would like to be called, by voice or by typing it below.',
     confirmed: 'Your request has been sent to RelayPay Support.',
-    confirmedBody: 'A support specialist will follow up using the contact information you provided.',
+    confirmedBody: 'A support specialist will follow up using the contact details on your account.',
     requestedCallback: 'Requested callback',
   },
   ticket: {
@@ -112,6 +106,10 @@ export const COPY = {
       'This request needs to be continued by a support specialist. You can start a new conversation whenever you need help.',
     endedBodyTimeout: 'This support session reached its time limit.',
     endedNewConversation: 'You can start a new support conversation whenever you need help.',
+    endedBodyLowConfidence:
+      "We had trouble hearing you, so the conversation ended. You can type your message instead, or start a new conversation.",
+    endedBodyError: 'Something went wrong and the conversation ended. You can start a new conversation whenever you need help.',
+    endedBodyHumanClosed: 'A support specialist has closed this conversation.',
   },
   errors: {
     connection: {
@@ -123,6 +121,11 @@ export const COPY = {
       detail: 'Microphone access is required to use voice support.',
       action: 'Check microphone access',
     },
+    'no-microphone': {
+      message: "We couldn't find a microphone.",
+      detail: 'Connect a microphone or headset, then try again.',
+      action: 'Check microphone access',
+    },
     service: {
       message: 'Something went wrong while processing your request.',
       action: 'Try again',
@@ -132,7 +135,60 @@ export const COPY = {
       detail: 'Please open this page in a recent version of Chrome, Edge, Safari or Firefox.',
       action: 'Try again',
     },
+    unavailable: {
+      message: "Voice support isn't available right now.",
+      detail: 'Please try again in a little while.',
+      action: 'Try again',
+    },
   } satisfies Record<ErrorKind, { message: string; detail?: string; action: string }>,
+  /** Said while the microphone is muted or the room is loud. Best effort: shown only when the browser could tell. */
+  audio: {
+    muted: 'Your microphone is muted, so RelayPay Support cannot hear you. Unmute it to carry on talking.',
+    noisy: 'It sounds noisy where you are. If RelayPay Support has trouble hearing you, try a quieter spot or a headset.',
+  },
+  /** The 30 second window to pick a conversation back up after it ends. */
+  resume: {
+    prompt: 'You can pick this conversation back up for {seconds} more seconds. Your transcript will be kept.',
+    promptOne: 'You can pick this conversation back up for 1 more second. Your transcript will be kept.',
+    action: 'Resume conversation',
+    decline: 'No, thanks',
+    failed: "We couldn't resume that conversation. You can start another one.",
+  },
+  /** Typing as an alternative to talking (the same conversation, or a typed-only one when the microphone cannot be used). */
+  typed: {
+    heading: 'Type to RelayPay Support',
+    intro: 'Type your question and RelayPay Support will answer in writing.',
+    label: 'Type a message',
+    placeholder: 'Type here instead of speaking',
+    send: 'Send',
+    sending: 'Sending…',
+    tooLong: 'That message is too long. Please shorten it.',
+    failed: "We couldn't send that. Please try again.",
+    rateLimited: 'You are sending messages quickly. Please wait a moment and try again.',
+    typeInstead: 'Type instead',
+    useVoice: 'Use voice instead',
+    thinking: 'RelayPay Support is typing…',
+  },
+  /** Offered beside the error when the customer cannot (or cannot right now) use voice support. */
+  errorHelp: {
+    unavailable: { text: 'If it is urgent, you can reach a support specialist from your dashboard.', linkLabel: 'Go to your dashboard', href: '/dashboard' },
+  },
+  /** Said under the Start button before the browser asks for the microphone. */
+  microphone: {
+    heading: 'Before you start',
+    instruction:
+      'Voice support needs your microphone. When you start, your browser will ask for permission. Choose Allow to talk with RelayPay Support.',
+  },
+  /** Saving the conversation to the customer's account (so it shows in their history). */
+  link: {
+    saving: 'Saving this conversation to your account…',
+    failed: "We couldn't save this conversation to your account yet.",
+    saveAction: 'Save this conversation to your account',
+    saved: 'Saved to your account.',
+    signedIn: 'You are signed in. Your conversation is saved to your account.',
+  },
+  /** A calm, non-blocking notice while the live status updates are not arriving. */
+  statusUnavailable: "We're having trouble refreshing the status of your conversation. It will keep trying.",
   notConfigured: "Voice support isn't available right now. Please try again later.",
 };
 
@@ -157,3 +213,19 @@ export const FORBIDDEN_CUSTOMER_TERMS = [
   'in_progress',
   'api error',
 ];
+
+/**
+ * What the ended screen says for each recorded end reason (docs/BUILD-PLAN-V3.md V3.4). `null` means the ordinary ending,
+ * which uses the default completion wording. Every public end reason has an entry, so none can fall through unexplained;
+ * while the reason is still being read the screen uses the same calm default.
+ */
+export const END_REASON_BODY: Record<PublicEndReason, string | null> = {
+  'user-ended': null,
+  'agent-ended': null,
+  'silence-timeout': COPY.session.endedBodySilence,
+  'session-timeout': COPY.session.endedBodyTimeout,
+  'limit-reached': COPY.session.endedBodyLimit,
+  'low-confidence': COPY.session.endedBodyLowConfidence,
+  'human-closed': COPY.session.endedBodyHumanClosed,
+  error: COPY.session.endedBodyError,
+};

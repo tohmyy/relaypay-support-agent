@@ -160,12 +160,12 @@ describe('the customer chat when the callback is off', () => {
     },
   });
 
-  it('offers a callback when it is on', async () => {
+  it('points to the message box for a callback when it is on (no callback form)', async () => {
     stubFetch({ [`GET ${BASE}/messages`]: waiting({}) });
     render(<HumanSupport conversationId="vapi_abc" />);
-    expect(await screen.findByRole('button', { name: 'Request a callback instead' })).toBeTruthy();
-    expect(screen.getByText(/You can ask for a callback instead at any time/)).toBeTruthy();
-    expect(screen.getByText(/Still waiting\? We can arrange a callback instead/)).toBeTruthy();
+    expect(await screen.findByText(/tell us a day and time in the message box/)).toBeTruthy();
+    expect(screen.getByText(/Still waiting\? Tell us in the message box when you would like a callback/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /callback/i })).toBeNull();
   });
 
   it('does not offer or mention a callback when an administrator turned it off, but still lets the customer end the chat', async () => {
@@ -173,7 +173,6 @@ describe('the customer chat when the callback is off', () => {
     render(<HumanSupport conversationId="vapi_abc" />);
     expect(await screen.findByText('Our team will reply as soon as someone is free.')).toBeTruthy();
     expect(screen.getByText(/Thanks for your patience/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Request a callback instead' })).toBeNull();
     expect(screen.queryByText(/callback/i)).toBeNull();
     expect(screen.getByRole('button', { name: 'End chat' })).toBeTruthy();
   });

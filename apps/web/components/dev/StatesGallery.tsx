@@ -52,7 +52,6 @@ const FIXTURES: Fixture[] = [
   { name: 'assistant-speaking', voice: { state: 'assistant-speaking' }, support: 'normal', turns: FEES },
   { name: 'clarifying', voice: { state: 'listening' }, support: 'clarifying', turns: [t(1, 'user', 'My payment is stuck.'), t(2, 'assistant', 'Is this an outgoing payout, an incoming transfer, or an invoice payment?')] },
   { name: 'escalation-required', voice: { state: 'assistant-speaking' }, support: 'escalation-required', turns: ESCALATION },
-  { name: 'escalating', voice: { state: 'processing' }, support: 'escalating', turns: [...ESCALATION, t(3, 'user', 'Contact details sent to RelayPay Support.')] },
   {
     name: 'escalated',
     voice: { state: 'listening' },
@@ -119,7 +118,6 @@ export default function StatesGallery() {
             unavailable={f.unavailable}
             onStart={noop}
             onEnd={noop}
-            onSubmitContact={noop}
           />
         </section>
       ))}

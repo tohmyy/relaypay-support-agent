@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { assistantPatch, credentialName, credentialPayload, normalizePublicUrl, redact } from '../../scripts/vapi/payload';
+import {
+  assertServerMessages,
+  assistantPatch,
+  credentialName,
+  credentialPayload,
+  missingServerMessages,
+  normalizePublicUrl,
+  redact,
+} from '../../scripts/vapi/payload';
 
 describe('vapi setup payloads', () => {
   it('normalizes the public URL to an https origin', () => {
@@ -23,6 +31,14 @@ describe('vapi setup payloads', () => {
     const limited = assistantPatch({ baseUrl: 'https://a.example.com', credentialId: 'c', webhookSecret: 'whsec-12345678', sessionMaxSeconds: 360 });
     expect(limited).toMatchObject({ maxDurationSeconds: 370, silenceTimeoutSeconds: 600 });
     expect(assistantPatch({ baseUrl: 'https://a.example.com', credentialId: 'c', webhookSecret: 'whsec-12345678', firstMessage: 'Hi' }).firstMessage).toBe('Hi');
+  });
+
+  it('asserts that speech-update (and the other required server messages) are in the patch', () => {
+    const p = assistantPatch({ baseUrl: 'https://a.example.com', credentialId: 'c', webhookSecret: 'whsec-12345678' });
+    expect(() => assertServerMessages(p)).not.toThrow();
+    expect(missingServerMessages(p.serverMessages)).toEqual([]);
+    expect(() => assertServerMessages({ serverMessages: ['status-update', 'end-of-call-report'] })).toThrow(/speech-update/);
+    expect(() => assertServerMessages({})).toThrow(/status-update/);
   });
 
   it('builds the credential payload', () => {

@@ -28,8 +28,9 @@ export function classifyVapiError(error: unknown): ErrorKind {
  * with the page. The conversation id is the call id with the `vapi_` prefix, which is exactly what the
  * agent server derives from Vapi's requests.
  */
-export function createVapiClient(opts: { publicKey: string; assistantId: string }): VoiceClient {
+export function createVapiClient(opts: { publicKey: string; assistantId: string; resumeConversationId?: string }): VoiceClient {
   let vapi: import('@vapi-ai/web').default | undefined;
+  let muteTimer: ReturnType<typeof setInterval> | undefined;
 
   return {
     async start(h: VoiceClientHandlers) {
@@ -52,12 +53,40 @@ export function createVapiClient(opts: { publicKey: string; assistantId: string 
         }
       });
 
-      const call = await instance.start(opts.assistantId);
+      // Mute status: the SDK has no mute event, so the (cheap, local) flag is read once a second and reported on change.
+      let lastMuted: boolean | undefined;
+      const readMuted = () => {
+        try {
+          const muted = instance.isMuted();
+          if (typeof muted === 'boolean' && muted !== lastMuted) {
+            lastMuted = muted;
+            h.onMuteChange?.(muted);
+          }
+        } catch {
+          // No signal: say nothing rather than guess.
+        }
+      };
+      instance.on('call-start', () => {
+        readMuted();
+        muteTimer ??= setInterval(readMuted, 1000);
+      });
+      instance.on('call-end', () => {
+        if (muteTimer) clearInterval(muteTimer);
+        muteTimer = undefined;
+      });
+
+      // A resumed call carries the conversation it continues, so the agent keeps one conversation (docs/VAPI.md, "Resuming").
+      const call = await instance.start(
+        opts.assistantId,
+        opts.resumeConversationId ? { metadata: { conversation_id: opts.resumeConversationId } } : undefined,
+      );
       if (!call?.id) throw new Error('call did not start');
-      return { conversationId: `vapi_${call.id}`.slice(0, 64) };
+      return { conversationId: opts.resumeConversationId ?? `vapi_${call.id}`.slice(0, 64) };
     },
 
     async stop() {
+      if (muteTimer) clearInterval(muteTimer);
+      muteTimer = undefined;
       await vapi?.stop();
     },
 

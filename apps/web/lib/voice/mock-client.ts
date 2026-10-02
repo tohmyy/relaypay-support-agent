@@ -38,6 +38,9 @@ export class MockVoiceClient implements VoiceClient {
   stopped = false;
   private timers: ReturnType<typeof setTimeout>[] = [];
 
+  /** Test and preview helpers: the signals a real provider may give. */
+  muted?: boolean;
+
   constructor(
     private readonly script: MockStep[] = [],
     private readonly conversationId = 'vapi_mock-call',

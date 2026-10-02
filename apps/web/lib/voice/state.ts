@@ -10,10 +10,20 @@ export type VoiceState =
   | 'ended'
   | 'error';
 
-export type ErrorKind = 'connection' | 'microphone' | 'service' | 'unsupported';
+export type ErrorKind =
+  | 'connection'
+  | 'microphone'
+  | 'no-microphone'
+  | 'service'
+  | 'unsupported'
+  | 'unavailable';
 
 export type VoiceEvent =
   | { type: 'START' }
+  /** A start that was stopped before any call existed (for example by a conversation limit): back to idle. */
+  | { type: 'ABORT' }
+  /** A resume that could not be carried out (the window passed, the conversation could not be reopened): back to the ended screen. */
+  | { type: 'RESUME_FAILED' }
   | { type: 'CALL_STARTED' }
   | { type: 'USER_SPEECH_START' }
   | { type: 'USER_SPEECH_END' }
@@ -50,6 +60,10 @@ export function voiceReducer(model: VoiceModel, event: VoiceEvent): VoiceModel {
   switch (event.type) {
     case 'START':
       return state === 'idle' || state === 'ended' || state === 'error' ? { state: 'connecting' } : model;
+    case 'ABORT':
+      return state === 'connecting' ? { state: 'idle' } : model;
+    case 'RESUME_FAILED':
+      return state === 'connecting' ? { state: 'ended' } : model;
     case 'CALL_STARTED':
       return state === 'connecting' ? { state: 'listening' } : model;
     case 'USER_SPEECH_START':

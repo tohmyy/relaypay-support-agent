@@ -185,7 +185,7 @@ describe('Session Controller integration', () => {
     expect((await r.json()).choices[0].message.content).toBe('Goodbye.');
     expect(calls).toHaveLength(0);
     expect(log.after).toHaveLength(0);
-    expect(log.before[0]).toEqual({ conversationId: 'vapi_call1', callId: 'call1', userMessage: "that's all" });
+    expect(log.before[0]).toEqual({ conversationId: 'vapi_call1', callId: 'call1', userMessage: "that's all", textOnly: false });
   });
 
   it('keeps the SSE contract for controller replies', async () => {

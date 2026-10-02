@@ -11,6 +11,8 @@ export interface LoadedHistory {
   nextTurnNumber: number;
   /** The signed-in customer this call is linked to, if the web app has linked it. */
   customerId: string | null;
+  /** The signed-in account (app_users.id) behind that customer, when linked. */
+  userId: string | null;
 }
 
 function fail(action: string, error: { message: string } | null) {
@@ -40,7 +42,7 @@ export async function loadHistory(
       .eq('conversation_id', conversationId)
       .order('turn_number', { ascending: false }),
     // "Raised" means a handoff record was actually created, not just that escalation was the right path.
-    db.from('conversations').select('final_status, customer_id').eq('conversation_id', conversationId),
+    db.from('conversations').select('final_status, customer_id, user_id').eq('conversation_id', conversationId),
   ]);
   fail('load history', turns.error);
   // Messages from staff and the system (no turn number) are not part of the AI conversation.
@@ -54,6 +56,7 @@ export async function loadHistory(
     escalationRaised: (conv.data ?? []).some((c) => c.final_status === 'escalated'),
     nextTurnNumber: (rows[0]?.turn_number ?? 0) + 1,
     customerId: (conv.data ?? []).map((c) => c.customer_id as string | null | undefined).find(Boolean) ?? null,
+    userId: (conv.data ?? []).map((c) => c.user_id as string | null | undefined).find(Boolean) ?? null,
   };
 }
 

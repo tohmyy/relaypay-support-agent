@@ -18,7 +18,10 @@ import {
 } from '@/lib/human/messages';
 import {
   QUEUE_CONVERSATION_COLUMNS,
+  startOfUtcDay,
+  sumCosts,
   type QueueConversationRow,
+  type QueueCostRow,
   type QueueCustomerRow,
   type QueueTicketRow,
 } from './staff';
@@ -41,10 +44,11 @@ export async function getCustomerPayouts(customerId: string): Promise<PayoutRow[
   return restSelect<PayoutRow>('payouts', `select=${PAYOUT_COLUMNS}&customer_id=${eq(customerId)}&order=scheduled_for.desc&limit=100`);
 }
 
-export async function getCustomerConversations(customerId: string, limit = 20): Promise<ConversationRow[]> {
+export async function getCustomerConversations(customerId: string, limit = 20, offset = 0): Promise<ConversationRow[]> {
   return restSelect<ConversationRow>(
     'conversations',
-    `select=${CONVERSATION_COLUMNS}&customer_id=${eq(customerId)}&order=started_at.desc&limit=${limit}`,
+    `select=${CONVERSATION_COLUMNS}&customer_id=${eq(customerId)}&order=started_at.desc&limit=${limit}` +
+      (offset > 0 ? `&offset=${offset}` : ''),
   );
 }
 
@@ -171,10 +175,67 @@ export async function getConversationEscalation(ticketId: string): Promise<Escal
   return row ?? null;
 }
 
+/** Turn costs are read a few conversations at a time so a single request never runs into the row limit. */
+const COST_CHUNK = 25;
+
+/** The recorded model cost of every turn of these conversations (staff only). */
+export async function getCostRows(conversationIds: string[]): Promise<QueueCostRow[]> {
+  const ids = [...new Set(conversationIds)].filter(Boolean);
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += COST_CHUNK) chunks.push(ids.slice(i, i + COST_CHUNK));
+  const rows = await Promise.all(
+    chunks.map((chunk) =>
+      restSelect<QueueCostRow>(
+        'conversation_turns',
+        `select=conversation_id,cost_usd&cost_usd=not.is.null&conversation_id=in.(${chunk
+          .map((id) => encodeURIComponent(`"${id}"`))
+          .join(',')})&limit=1000`,
+      ),
+    ),
+  );
+  return rows.flat();
+}
+
+/** Estimated model cost of one conversation (USD), for the staff detail page. */
+export async function getConversationCost(conversationId: string): Promise<number> {
+  return sumCosts(await getCostRows([conversationId])).get(conversationId) ?? 0;
+}
+
+/**
+ * The estimated model cost of every conversation that started in the current UTC calendar day (staff only): the sum of
+ * each one's turn costs. Model usage only; the voice provider's own call cost is not included and this is not a bill.
+ */
+export async function getTodayCostTotal(now: Date = new Date()): Promise<number> {
+  const since = startOfUtcDay(now).toISOString();
+  const today = await restSelect<{ conversation_id: string }>(
+    'conversations',
+    `select=conversation_id&started_at=gte.${encodeURIComponent(since)}&order=started_at.desc&limit=500`,
+  );
+  const costs = sumCosts(await getCostRows(today.map((c) => c.conversation_id)));
+  return [...costs.values()].reduce((a, b) => a + b, 0);
+}
+
+export interface FeedbackRow {
+  stage: 'ai' | 'human';
+  rating: number;
+  comment: string | null;
+  created_at: string;
+}
+
+/** Staff only: the ratings and comments a customer left for this conversation. */
+export async function getConversationFeedback(conversationId: string): Promise<FeedbackRow[]> {
+  return restSelect<FeedbackRow>(
+    'conversation_feedback',
+    `select=stage,rating,comment,created_at&conversation_id=${eq(conversationId)}&order=created_at.asc&limit=2`,
+  );
+}
+
 export async function getStaffQueueRows(): Promise<{
   conversations: QueueConversationRow[];
   tickets: QueueTicketRow[];
   customers: QueueCustomerRow[];
+  costs?: QueueCostRow[];
+  todayCostUsd?: number | null;
 }> {
   const [conversations, tickets, customers] = await Promise.all([
     restSelect<QueueConversationRow>(
@@ -187,7 +248,12 @@ export async function getStaffQueueRows(): Promise<{
     ),
     restSelect<QueueCustomerRow>('customers', 'select=customer_id,company_name,contact_name&limit=200'),
   ]);
-  return { conversations, tickets, customers };
+  // Costs are extra information: if they cannot be read the queue still works and shows the cost as unavailable.
+  const [costs, todayCostUsd] = await Promise.all([
+    getCostRows(conversations.map((c) => c.conversation_id)).catch(() => undefined),
+    getTodayCostTotal().catch(() => null),
+  ]);
+  return { conversations, tickets, customers, costs, todayCostUsd };
 }
 
 export async function getStaffCustomer(customerId: string): Promise<(CustomerProfile & { customer_id: string }) | null> {

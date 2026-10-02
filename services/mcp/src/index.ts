@@ -6,7 +6,11 @@ import { flushToolRecords } from './tools';
 
 const env = loadEnv();
 const store = createStore(createSupabase(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY));
-const server = createHttpServer({ store, authToken: env.MCP_SERVER_AUTH_TOKEN });
+// Like the rate limits, signed-in-only account access is on by default only in production.
+const requireIdentity = env.MCP_REQUIRE_IDENTITY
+  ? env.MCP_REQUIRE_IDENTITY === '1'
+  : process.env.NODE_ENV === 'production';
+const server = createHttpServer({ store, authToken: env.MCP_SERVER_AUTH_TOKEN, requireIdentity });
 
 server.listen(env.MCP_PORT, env.MCP_HOST, () => {
   console.log(`RelayPay MCP server listening on http://${env.MCP_HOST}:${env.MCP_PORT}/mcp`);

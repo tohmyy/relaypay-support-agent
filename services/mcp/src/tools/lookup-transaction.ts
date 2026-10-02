@@ -13,9 +13,11 @@ export const lookupTransaction: ToolDef<z.infer<typeof lookupTransactionSchema>>
     'currency, estimated arrival and a support summary. Translate the result into customer-friendly language.',
   shape: { transaction_id: z.string().optional().describe('required, e.g. TXN-9001') },
   schema: lookupTransactionSchema,
-  async run(input, store) {
+  accountScoped: true,
+  async run(input, store, ctx) {
     const t = await store.getTransaction(input.transaction_id);
-    if (!t) return { found: false };
+    // Someone else's transaction looks exactly like a missing one.
+    if (!t || (ctx.identity && t.customer_id !== ctx.identity.customerId)) return { found: false };
     return {
       found: true,
       transaction_id: t.transaction_id,

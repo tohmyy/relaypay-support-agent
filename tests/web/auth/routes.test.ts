@@ -130,10 +130,9 @@ describe('state route and linked conversations', () => {
     });
   const openLinked = { ended_at: null, started_at: '2026-10-02T09:00:00Z', customer_id: 'CUS-1001', final_status: null };
 
-  it('leaves an unlinked conversation exactly as before and never looks up the user', async () => {
+  it('answers a conversation tied to nobody with the neutral state and never looks up the user', async () => {
     rows({ ended_at: null, started_at: '2026-10-02T09:00:00Z', customer_id: null });
-    const body = await (await call()).json();
-    expect(body).toMatchObject({ answerType: 'direct_answer', ticketReference: 'TKT-000007' });
+    expect(await (await call()).json()).toEqual(NEUTRAL_STATE);
     expect(h.getCurrentUser).not.toHaveBeenCalled();
   });
 

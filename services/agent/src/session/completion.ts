@@ -66,6 +66,35 @@ export function classifyCompletion(text: string): Completion {
   return 'none';
 }
 
+/**
+ * Sounds a speech recogniser produces for coughs, hums and background noise. They are made of letters but say nothing.
+ */
+const NOISE_SOUNDS = new Set(['uh', 'um', 'umm', 'uhh', 'hmm', 'hm', 'mm', 'mmm', 'mhm', 'huh', 'er', 'erm', 'ah', 'eh', 'oh', 'ugh']);
+
+/** A token that could plausibly be a word: has a vowel, is not absurdly long, and has no long run of consonants or repeats. */
+function wordLike(token: string): boolean {
+  if (token.length === 1) return token === 'a' || token === 'i';
+  if (NOISE_SOUNDS.has(token)) return false;
+  if (token.length > 20) return false;
+  if (!/[aeiouy]/.test(token)) return false;
+  if (/[^aeiouy]{5,}/.test(token)) return false;
+  if (/(.)\1{3,}/.test(token)) return false;
+  return true;
+}
+
+/**
+ * True when what the speech recogniser heard is noise or keyboard mash rather than language: nothing in it looks like a
+ * word. Anything with a digit (a reference number) or a question mark is never gibberish. Deliberately conservative: a
+ * real sentence with one odd word is not gibberish, so the customer is only ever ended on after several garbled turns
+ * in a row (`SessionController`, concern 40).
+ */
+export function looksLikeGibberish(text: string): boolean {
+  if (/\d|\?/.test(text)) return false;
+  const tokens = text.toLowerCase().match(/[a-z]+/g) ?? [];
+  if (tokens.length === 0) return true; // only punctuation or symbols
+  return !tokens.some(wordLike);
+}
+
 const DECLINE = new RegExp(
   "^(?:(?:no|nope|nah|nothing|not really|not right now|not today|i'?m good|im good|all good|we'?re good|that'?s okay|that is okay|thanks|thank you) ?)+$",
 );

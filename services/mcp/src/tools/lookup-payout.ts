@@ -16,9 +16,10 @@ export const lookupPayout: ToolDef<z.infer<typeof lookupPayoutSchema>> = {
     transaction_id: z.string().optional().describe('e.g. TXN-9003'),
   },
   schema: lookupPayoutSchema,
-  async run(input, store) {
+  accountScoped: true,
+  async run(input, store, ctx) {
     const p = await store.findPayout(input);
-    if (!p) return { found: false };
+    if (!p || (ctx.identity && p.customer_id !== ctx.identity.customerId)) return { found: false };
     const txn = p.transaction_id ? await store.getTransaction(p.transaction_id) : null;
     return {
       found: true,

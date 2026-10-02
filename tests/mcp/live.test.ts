@@ -98,7 +98,7 @@ describe.skipIf(!live)('MCP tools against Supabase (live)', () => {
       user_email: 'test-live@example.com',
       category: 'payment',
       reason: 'Integration test',
-      preferred_time: 'tomorrow morning',
+      preferred_at: new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString(),
     }, { conversationId })) as { escalation_id: string; status: string };
     expect(esc.escalation_id).toMatch(/^ESC-\d{6}$/);
     expect(esc.status).toBe('open');

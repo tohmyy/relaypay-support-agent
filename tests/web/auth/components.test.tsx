@@ -18,7 +18,6 @@ vi.mock('@/hooks/useVoiceSession', () => ({
     conversationId: h.conversationId,
     start: async () => {},
     end: async () => {},
-    submitContact: () => {},
   }),
 }));
 vi.mock('@/components/SupportWorkspace', () => ({ default: () => <div data-testid="workspace" /> }));

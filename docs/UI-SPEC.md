@@ -514,9 +514,10 @@ Label:
 
 > RelayPay Support
 
-Avoid traditional messaging-app styling with large speech bubbles.
-
-A simple structured transcript is more appropriate for a professional support experience.
+> **Amended by Build Plan V3 (concern 14, V3.11).** The live transcript now renders **one chat bubble per turn**: the customer's
+> on the right, RelayPay Support's on the left, each with its speaker label. It matches the saved-transcript view
+> (`TranscriptView`), so what the customer sees live is what they find in their history. Keep the bubbles calm (no avatars,
+> no tails, no animation); the transcript is still secondary to the voice interaction.
 
 Each turn may contain:
 
@@ -907,9 +908,10 @@ Recommended behavior:
 
 ### Desktop
 
-* Two-column support workspace
+* **One column** (amended by Build Plan V3, concern 11, V3.11): the voice panel and status notices on top, the conversation
+  underneath, each at full width. The old two-column workspace (voice left, transcript right) left both panes short.
 * Voice interface as primary
-* Transcript as secondary
+* Transcript as secondary, scrolling inside its own region (it sticks to the newest turn unless the customer scrolls up)
 
 ### Large Desktop
 

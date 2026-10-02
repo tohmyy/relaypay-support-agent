@@ -1,4 +1,6 @@
 import type {
+  AppUserRow,
+  ConversationIdentity,
   CustomerRow,
   PayoutRow,
   Store,
@@ -39,7 +41,13 @@ export const payouts: PayoutRow[] = [
   },
 ];
 
+export const appUsers: Record<string, AppUserRow> = {
+  'user-1': { display_name: 'Amara Okafor', email: 'amara@lagosledger.example' },
+};
+
 export interface FakeStore extends Store {
+  /** conversation_id -> who it is linked to (what the web app's link wrote). Absent = no such conversation. */
+  identities: Map<string, ConversationIdentity>;
   calls: string[];
   toolCalls: ToolCallRecord[];
   events: unknown[];
@@ -58,6 +66,15 @@ export function createFakeStore(): FakeStore {
     tickets: [],
     escalations: [],
     conversations: new Set(),
+    identities: new Map(),
+    async getConversationIdentity(id) {
+      if (s.failWith) throw s.failWith;
+      return s.identities.get(id) ?? null;
+    },
+    async getAppUser(id) {
+      if (s.failWith) throw s.failWith;
+      return appUsers[id] ?? null;
+    },
     async findCustomer(q) {
       s.calls.push('findCustomer');
       if (s.failWith) throw s.failWith;

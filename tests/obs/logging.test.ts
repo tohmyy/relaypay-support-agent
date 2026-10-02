@@ -165,7 +165,7 @@ describe('tool call logging', () => {
     const store = createFakeStore();
     await executeTool(
       tool('create_escalation'),
-      { user_name: 'Ada Lovelace', user_email: 'ada@example.com', category: 'account', reason: 'my card 4111111111111111 was stolen' },
+      { user_name: 'Ada Lovelace', user_email: 'ada@example.com', category: 'account', reason: 'my card 4111111111111111 was stolen', preferred_at: new Date(Date.now() + 86400000).toISOString() },
       store,
     );
     const rec = store.toolCalls[0];

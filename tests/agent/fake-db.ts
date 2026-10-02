@@ -39,6 +39,7 @@ export function fakeDb(seed: Partial<Record<string, Row[]>> = {}) {
       is: (c: string, v: unknown) => (filters.push((r) => (r[c] ?? null) === v), b),
       in: (c: string, v: unknown[]) => (filters.push((r) => v.includes(r[c])), b),
       limit: () => b,
+      abortSignal: () => b,
       gte: (c: string, v: unknown) => (filters.push((r) => String(r[c] ?? '') >= String(v)), b),
       order: (_c: string, o?: { ascending?: boolean }) => ((desc = o?.ascending === false), b),
       update: (p: Row) => ((mode = 'update'), (patch = p), b),

@@ -35,6 +35,37 @@ export interface QueueCustomerRow {
   contact_name: string | null;
 }
 
+/** A turn's recorded model cost; null when the turn was not billed (fixed replies). */
+export interface QueueCostRow {
+  conversation_id: string;
+  cost_usd: number | string | null;
+}
+
+/**
+ * Estimated model cost per conversation: the sum of its turns' `cost_usd` (a turn without one counts as 0). Estimates of
+ * model usage only, never provider call cost and never a bill.
+ */
+export function sumCosts(rows: QueueCostRow[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const n = Number(r.cost_usd ?? 0);
+    out.set(r.conversation_id, (out.get(r.conversation_id) ?? 0) + (Number.isFinite(n) ? n : 0));
+  }
+  return out;
+}
+
+/** Midnight UTC at the start of `now`'s UTC calendar day. */
+export function startOfUtcDay(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
+
+/** "$0.0421": two to four decimals, because one conversation costs cents or fractions of one. */
+export function formatUsd(n: number | null | undefined): string {
+  return n === null || n === undefined || !Number.isFinite(n) ? '—' : USD.format(n);
+}
+
 export type QueueState = 'open' | 'waiting' | 'in-progress' | 'escalated' | 'resolved';
 
 export interface QueueItem {
@@ -50,11 +81,15 @@ export interface QueueItem {
   /** The customer has written something this member of staff has not seen yet. */
   unread: boolean;
   assignedToMe: boolean;
+  /** Estimated model cost of this conversation (USD); null when costs could not be read. */
+  estimatedCostUsd?: number | null;
 }
 
 export interface StaffQueue {
   counts: { open: number; waiting: number; inProgress: number; escalated: number; resolvedToday: number };
   items: QueueItem[];
+  /** Estimated model cost of the conversations started today (UTC calendar day); null when it could not be read. */
+  todayCostUsd?: number | null;
 }
 
 const ISSUE_LABELS: Record<string, string> = {
@@ -74,7 +109,8 @@ const STATE_LABELS: Record<QueueState, string> = {
   waiting: 'Waiting for staff',
   'in-progress': 'In progress',
   escalated: 'Escalated',
-  resolved: 'Resolved',
+  // The AI conversation's outcome (the customer confirmed they were done), not that any ticket was closed.
+  resolved: 'Conversation resolved',
 };
 
 /**
@@ -96,12 +132,23 @@ const sameUtcDay = (value: string | null, now: Date) => {
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === now.toISOString().slice(0, 10);
 };
 
+export interface QueueInput {
+  conversations: QueueConversationRow[];
+  tickets: QueueTicketRow[];
+  customers: QueueCustomerRow[];
+  /** Turn costs for these conversations; absent when they could not be read. */
+  costs?: QueueCostRow[];
+  /** Today's (UTC) total when it was computed over more than the listed conversations. */
+  todayCostUsd?: number | null;
+}
+
 export function buildStaffQueue(
-  input: { conversations: QueueConversationRow[]; tickets: QueueTicketRow[]; customers: QueueCustomerRow[] },
+  input: QueueInput,
   now: Date = new Date(),
   viewerId?: string,
 ): StaffQueue {
   const customers = new Map(input.customers.map((c) => [c.customer_id, c]));
+  const costs = input.costs ? sumCosts(input.costs) : null;
   const tickets = new Map<string, QueueTicketRow>();
   for (const t of input.tickets) if (t.conversation_id && !tickets.has(t.conversation_id)) tickets.set(t.conversation_id, t);
 
@@ -122,6 +169,7 @@ export function buildStaffQueue(
         unread:
           (state === 'waiting' || state === 'in-progress') && hasUnread(c.last_customer_message_at, c.staff_last_read_at),
         assignedToMe: Boolean(viewerId) && c.assigned_staff_id === viewerId,
+        estimatedCostUsd: costs ? (costs.get(c.conversation_id) ?? 0) : null,
       };
     })
     .sort((a, b) => rank(a.state) - rank(b.state));
@@ -135,7 +183,16 @@ export function buildStaffQueue(
     else if (state === 'escalated') counts.escalated++;
     else if (sameUtcDay(c.ended_at, now)) counts.resolvedToday++;
   }
-  return { counts, items };
+  const dayStart = startOfUtcDay(now).getTime();
+  const today =
+    input.todayCostUsd !== undefined
+      ? input.todayCostUsd
+      : costs
+        ? input.conversations
+            .filter((c) => Date.parse(c.started_at ?? '') >= dayStart)
+            .reduce((sum, c) => sum + (costs.get(c.conversation_id) ?? 0), 0)
+        : null;
+  return { counts, items, todayCostUsd: today };
 }
 
 const rank = (s: QueueState) => ({ waiting: 0, escalated: 1, 'in-progress': 2, open: 3, resolved: 4 })[s];
@@ -146,7 +203,7 @@ const rank = (s: QueueState) => ({ waiting: 0, escalated: 1, 'in-progress': 2, o
  */
 export function buildStaffQueueFor(
   user: AccessUser,
-  input: { conversations: QueueConversationRow[]; tickets: QueueTicketRow[]; customers: QueueCustomerRow[] },
+  input: QueueInput,
   now: Date = new Date(),
 ): StaffQueue & { waitingCount: number; unreadCount: number } {
   const all = buildStaffQueue(input, now, user.id);
@@ -167,6 +224,7 @@ export function buildStaffQueueFor(
   return {
     counts: all.counts,
     items,
+    todayCostUsd: all.todayCostUsd,
     waitingCount: all.counts.waiting,
     unreadCount: items.filter((i) => i.unread).length,
   };

@@ -341,42 +341,25 @@ describe('waiting for a specialist', () => {
     },
   });
 
-  it('nudges towards a callback after three minutes', async () => {
+  it('nudges towards asking for a callback in the chat after three minutes', async () => {
     fakeFetch({ [`GET ${BASE}/messages`]: waiting(4) });
     render(<HumanSupport conversationId="vapi_abc" />);
     expect(await screen.findByText(/Still waiting\?/)).toBeTruthy();
     expect(screen.getByText(/Waiting for 4 minutes/)).toBeTruthy();
   });
 
-  it('asks for a callback instead: sends the preferred time, then shows it was received', async () => {
-    const f = fakeFetch({
-      [`GET ${BASE}/messages`]: waiting(1),
-      [`POST ${BASE}/callback`]: { json: { requested: true } },
-    });
+  it('has no callback form or button, even while waiting (AC-18.1)', async () => {
+    fakeFetch({ [`GET ${BASE}/messages`]: waiting(1) });
     render(<HumanSupport conversationId="vapi_abc" />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Request a callback instead' }));
-    await userEvent.type(screen.getByLabelText(/good time to call/), 'Friday morning');
-    await userEvent.click(screen.getByRole('button', { name: 'Send callback request' }));
-    expect(await screen.findByText('This conversation is closed')).toBeTruthy();
-    expect(screen.getByText(/callback request has been sent/)).toBeTruthy();
-    expect(screen.queryByLabelText('Your message')).toBeNull();
-    expect(JSON.parse(f.calls.find((c) => c.url.endsWith('/callback'))!.body as string)).toEqual({ preferredTime: 'Friday morning' });
+    expect(await screen.findByLabelText('Your message')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /callback/i })).toBeNull();
+    expect(screen.queryByLabelText(/good time to call/)).toBeNull();
   });
 
-  it('keeps the chat open and says so if the callback request fails', async () => {
-    fakeFetch({ [`GET ${BASE}/messages`]: waiting(1), [`POST ${BASE}/callback`]: { status: 503, json: { error: 'unavailable' } } });
-    render(<HumanSupport conversationId="vapi_abc" />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Request a callback instead' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Send callback request' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('could not send your request');
-    expect(screen.getByLabelText('Your message')).toBeTruthy();
-  });
-
-  it('does not offer the callback once a specialist has joined', async () => {
+  it('does not nudge once a specialist has joined', async () => {
     fakeFetch({ [`GET ${BASE}/messages`]: waiting(5, { staff: { name: 'Sarah', title: null, avatarUrl: null }, waitingSince: null }) });
     render(<HumanSupport conversationId="vapi_abc" />);
     expect(await screen.findByText('Sarah')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Request a callback instead' })).toBeNull();
     expect(screen.queryByText(/Still waiting/)).toBeNull();
   });
 

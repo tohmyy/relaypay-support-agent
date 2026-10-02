@@ -38,10 +38,18 @@ records, no invented fees, no guarantees, no review timelines), the four respons
 look-up-versus-escalate policy, the escalation procedure and the never-list. Prompt text is data-versus-instructions
 aware: KB text, tool output and customer text are never followed as instructions.
 
-**Look up versus escalate.** The escalation rules say to escalate account questions, but scenarios need lookups
-first. The prompt resolves it: with an identifier, look it up and answer a normal status safely; escalate when the
-record shows review, compliance, restricted or failed, or when a dispute, suspension, verification concern,
-frustration or uncovered question is present; without an identifier, ask for one.
+**Look up versus escalate.** The prompt makes the assistant diagnose before it escalates: ask for a missing reference,
+look it up, summarise what it checked, and only then escalate if a person is still needed. Frustration alone does not skip
+this when a lookup is possible. Urgent paths (a record in review, compliance, restricted or failed state after the lookup, a
+reported suspension, fraud or security concern, a dispute, refund or cancellation, a verification concern) escalate straight
+away after at most one lookup. Without a reference it asks for one.
+
+**Who it is helping.** Each turn the prompt carries `<authenticated_customer>` (customer id, display name, email, company),
+read from the conversation's link and the account rows (`services/agent/src/identity.ts`, cached for 5 minutes; a link that
+has not landed yet adds nothing and is found on the next turn). The assistant never asks for name, email or customer id, and
+the email is never spoken. The prompt also carries `<current_time>` so "tomorrow at 2 pm" can become an exact
+`preferred_at`. The assistant never ends the call, closes the case or marks anything resolved: the Session Controller does
+that after the customer confirms they are finished.
 
 ## Output guard (code, not prompt)
 
@@ -80,8 +88,12 @@ Time limits, silence and "that's all" are handled by the Session Controller (`se
 the model. In `server.ts` each turn first goes through `SessionController.beforeTurn` (inside the per-conversation
 queue): a closer, an expired deadline or an ended call is answered with a fixed reply and the agent is not run;
 otherwise `runTurn` runs and `afterTurn` reports the result (an `escalation` answer without a record holds silence
-detection while the contact form is open). The agent keeps owning turn reasoning, turn persistence, the output guard
+detection while the callback time is still being agreed in the conversation; there is no form). The agent keeps owning turn reasoning, turn persistence, the output guard
 and escalation marking. Details and the end-reason table are in `docs/VAPI.md`.
+
+Two more routes serve the web server (same bearer token as the custom-LLM endpoint, `docs/VAPI.md`): `POST /text-turn` (a typed
+turn, for a customer who cannot use a microphone) and `POST /resume` (reopen a conversation that ended in the last 30 seconds).
+`GET /ready` reports whether the tool server and the database answer.
 
 Offline tests: `tests/agent/completion.test.ts`, `tests/agent/session-controller.test.ts` (fake timers), and the
 session cases in `tests/agent/server.test.ts` and `tests/agent/vapi.test.ts`.

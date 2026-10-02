@@ -22,6 +22,9 @@ const schema = z.object({
   SILENCE_COUNTDOWN_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
   // Human handoff (Mode B): after an escalation, signed-in customers move to a text chat with staff. Off by default.
   HUMAN_HANDOFF: z.preprocess(blank, z.enum(['0', '1']).default('0')),
+  // Signed-in callers only: a call not linked to a customer within the grace period is ended. Blank = on in production.
+  AGENT_REQUIRE_LINK: z.preprocess(blank, z.enum(['0', '1']).optional()),
+  LINK_GRACE_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).max(120).default(10)),
   // Abuse limits (docs/ABUSE.md); 0 turns one off. Defaults are conservative starting points, tuned from real usage.
   MAX_AGENT_CALLS: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(30)),
   MAX_TOOL_CALLS: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(50)),

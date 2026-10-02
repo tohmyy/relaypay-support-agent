@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
     getCustomerConversations: vi.fn(),
     getStaffQueueRows: vi.fn(),
     getStaffProfiles: vi.fn(),
+    getConversationFeedback: vi.fn(),
+    getConversationCost: vi.fn(),
   },
 }));
 
@@ -40,6 +42,7 @@ import InvoicesPage from '@/app/(customer)/invoices/page';
 import CustomerConversation from '@/app/(customer)/support/[conversationId]/page';
 import StaffConversation from '@/app/(staff)/staff/conversations/[conversationId]/page';
 import StaffQueuePage from '@/app/(staff)/staff/page';
+import HistoryPage from '@/app/(customer)/support/history/page';
 import { StaffInboxProvider } from '@/components/shell/StaffInbox';
 import { buildStaffQueueFor } from '@/lib/dashboard/staff';
 
@@ -74,6 +77,8 @@ beforeEach(() => {
   h.data.getConversationTicket.mockResolvedValue(null);
   h.data.getStaffProfiles.mockResolvedValue(new Map());
   h.data.getConversationEscalation.mockResolvedValue(null);
+  h.data.getConversationFeedback.mockResolvedValue([]);
+  h.data.getConversationCost.mockResolvedValue(0.0421);
   h.data.getStaffCustomer.mockResolvedValue({ customer_id: 'CUS-1001', company_name: 'LagosLedger', contact_name: 'Amara Okafor', contact_email: 'amara@lagosledger.example', plan: 'Growth' });
 });
 
@@ -130,10 +135,89 @@ describe('staff conversation page', () => {
     await expect(StaffConversation(params('vapi_abc'))).resolves.toBeTruthy();
   });
 
+  it('shows the estimated model cost of the call, labelled as an estimate (AC-12.3, AC-12.4)', async () => {
+    h.requireStaff.mockResolvedValue(user({ role: 'support_admin', customerId: null }));
+    h.data.getConversation.mockResolvedValue(conv());
+    h.data.getConversationCost.mockResolvedValue(0.0421);
+    const out = await html(StaffConversation(params('vapi_abc')));
+    expect(out).toContain('Estimated cost');
+    expect(out).toContain('$0.0421');
+    expect(out).toContain('estimate');
+    expect(h.data.getConversationCost).toHaveBeenCalledWith('vapi_abc');
+  });
+
+  it('says so when the cost cannot be read, without hiding the conversation', async () => {
+    h.requireStaff.mockResolvedValue(user({ role: 'support_admin', customerId: null }));
+    h.data.getConversation.mockResolvedValue(conv());
+    h.data.getConversationCost.mockRejectedValue(new Error('down'));
+    const out = await html(StaffConversation(params('vapi_abc')));
+    expect(out).toContain('Where is my payout?');
+    expect(out).toContain('Not available');
+  });
+
+  it('shows both rating stages with their comments (AC-36.1), or says there is none', async () => {
+    h.requireStaff.mockResolvedValue(user({ role: 'support_admin', customerId: null }));
+    h.data.getConversation.mockResolvedValue(conv());
+    expect(await html(StaffConversation(params('vapi_abc')))).toContain('No feedback yet');
+    h.data.getConversationFeedback.mockResolvedValue([
+      { stage: 'ai', rating: 4, comment: 'Quick answer', created_at: '2026-10-02T09:06:00Z' },
+      { stage: 'human', rating: 2, comment: 'Took a while', created_at: '2026-10-02T09:30:00Z' },
+    ]);
+    const out = await html(StaffConversation(params('vapi_abc')));
+    expect(out).toContain('Voice support: 4 out of 5');
+    expect(out).toContain('Quick answer');
+    expect(out).toContain('Specialist support: 2 out of 5');
+    expect(out).toContain('Took a while');
+  });
+
   it('is not available to a customer', async () => {
     h.requireStaff.mockRejectedValue(new Error('REDIRECT:/dashboard'));
     await expect(StaffConversation(params('vapi_abc'))).rejects.toThrow('REDIRECT:/dashboard');
     expect(h.data.getConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe('customer history page (AC-32.*)', () => {
+  const rows = (n: number, start = 0) =>
+    Array.from({ length: n }, (_, i) => conv({ conversation_id: `vapi_${start + i}`, started_at: `2026-10-${String(20 - ((start + i) % 19)).padStart(2, '0')}T09:00:00Z` }));
+  const page = (p?: string) => html(HistoryPage({ searchParams: Promise.resolve(p ? { page: p } : {}) }));
+
+  it('lists more than five conversations, ten to a page, for the customer in the session only', async () => {
+    h.requireCustomer.mockResolvedValue(user());
+    h.data.getCustomerConversations.mockResolvedValue(rows(11));
+    const out = await page();
+    expect(h.data.getCustomerConversations).toHaveBeenCalledWith('CUS-1001', 11, 0);
+    expect((out.match(/href="\/support\/vapi_/g) ?? []).length).toBe(10);
+    expect(out).toContain('Older');
+    expect(out).not.toContain('Newer');
+    expect(out).toContain('/support/history?page=2');
+  });
+
+  it('opens the second page with an offset, and links back to the first', async () => {
+    h.requireCustomer.mockResolvedValue(user());
+    h.data.getCustomerConversations.mockResolvedValue(rows(3, 10));
+    const out = await page('2');
+    expect(h.data.getCustomerConversations).toHaveBeenCalledWith('CUS-1001', 11, 10);
+    expect(out).toContain('Newer');
+    expect(out).toContain('href="/support/history"');
+    expect(out).not.toContain('Older');
+  });
+
+  it('treats a bad page number as the first page, and shows an empty state', async () => {
+    h.requireCustomer.mockResolvedValue(user());
+    h.data.getCustomerConversations.mockResolvedValue([]);
+    for (const bad of ['0', '-3', 'abc', '2.5', '99999999']) {
+      h.data.getCustomerConversations.mockClear();
+      const out = await page(bad);
+      expect(h.data.getCustomerConversations).toHaveBeenCalledWith('CUS-1001', 11, 0);
+      expect(out).toContain('You have not talked to RelayPay Support yet.');
+    }
+  });
+
+  it('sends a signed-out visitor to sign in before reading anything', async () => {
+    h.requireCustomer.mockRejectedValue(new Error('REDIRECT:/login?next=%2Fsupport%2Fhistory'));
+    await expect(page()).rejects.toThrow('REDIRECT:/login');
+    expect(h.data.getCustomerConversations).not.toHaveBeenCalled();
   });
 });
 

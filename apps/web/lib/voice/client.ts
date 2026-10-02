@@ -17,6 +17,10 @@ export interface VoiceClientHandlers {
   onVolume(level: number): void;
   onTranscript(event: TranscriptEvent): void;
   onError(kind: ErrorKind): void;
+  /** The microphone was muted or unmuted, when the provider can tell. Never called when it cannot. */
+  onMuteChange?(muted: boolean): void;
+  /** How loud the room is right now (0 to 1) while the customer is not speaking, when the provider can measure it. */
+  onAmbientLevel?(level: number): void;
 }
 
 /** The only surface the UI knows about the voice provider (keeps the provider swappable and testable). */
@@ -28,4 +32,5 @@ export interface VoiceClient {
   send(text: string): void;
 }
 
-export type VoiceClientFactory = () => VoiceClient;
+/** Builds a client. `resumeConversationId` continues an earlier conversation on a new call (the 30 second resume). */
+export type VoiceClientFactory = (options?: { resumeConversationId?: string }) => VoiceClient;

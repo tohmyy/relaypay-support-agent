@@ -14,6 +14,8 @@ Missing or invalid variables are reported by name only, never by value.
 | `VAPI_WEBHOOK_SECRET` | agent server, vapi:setup | yes | Sent by Vapi as `X-Vapi-Secret` to `/vapi/events`; blank disables the route |
 | `AGENT_PORT`, `AGENT_HOST` | agent server | no | Default 4100 and 127.0.0.1 |
 | `AGENT_PUBLIC_URL` | vapi:setup | no | Public base URL (tunnel or host) Vapi should call |
+| `AGENT_INTERNAL_URL` | web server | no | Where the web server reaches the agent for readiness checks. Default `http://<AGENT_HOST>:<AGENT_PORT>`. The web server also reads `AGENT_API_TOKEN` for this |
+| `AGENT_REQUIRE_LINK`, `LINK_GRACE_SECONDS` | agent | no | Signed-in callers only: a call not linked to a customer within `LINK_GRACE_SECONDS` (default 10, 1 to 120) is ended. `AGENT_REQUIRE_LINK` `1`/`0` overrides; blank = on only when `NODE_ENV=production` |
 | `AGENT_MODEL` | agent | no | Optional; default `claude-sonnet-5-5` |
 | `SESSION_MAX_SECONDS` | agent, web server | no | Absolute AI voice session limit. Default 360 (min 10) |
 | `SESSION_WARNING_SECONDS` | agent, web server | no | "Ending soon" warning window before the limit. Default 30 |
@@ -37,6 +39,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `MCP_SERVER_URL` | web server, agent | no | URL |
 | `MCP_PORT`, `MCP_HOST` | mcp | no | Optional; default 4000 and 127.0.0.1 |
 | `MCP_SERVER_AUTH_TOKEN` | web server, agent, mcp | yes | Shared bearer token |
+| `MCP_REQUIRE_IDENTITY` | mcp | no | `1`/`0`: account tools refuse a conversation not linked to a signed-in customer. Blank = on only when `NODE_ENV=production` |
 
 Validation: `apps/web/lib/env.ts` (public and server schemas), `apps/web/lib/env.server.ts`
 (`server-only`, lazy so builds work without secrets), `services/*/src/env.ts` (validated at process start).

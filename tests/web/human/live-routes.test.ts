@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrentUser } from '@/lib/auth/dal';
 
@@ -44,7 +46,6 @@ import { POST as staffRelease } from '@/app/api/staff/conversations/[id]/release
 import { GET as staffGet, POST as staffPost } from '@/app/api/staff/conversations/[id]/messages/route';
 import { GET as presenceGet, POST as presencePost } from '@/app/api/staff/presence/route';
 import { GET as queueGet } from '@/app/api/staff/queue/route';
-import { POST as callback } from '@/app/api/support/conversations/[id]/callback/route';
 import { POST as endChat } from '@/app/api/support/conversations/[id]/end/route';
 import { GET as customerGet, POST as customerPost } from '@/app/api/support/conversations/[id]/messages/route';
 import { POST as customerRead } from '@/app/api/support/conversations/[id]/read/route';
@@ -251,65 +252,10 @@ describe('customer ends the chat', () => {
   });
 });
 
-describe('customer asks for a callback instead', () => {
-  const account = [{ contact_name: 'Amara Okafor', contact_email: 'amara@lagosledger.example' }];
-
-  it('records a callback request from the account details, then ends the chat', async () => {
-    h.getCurrentUser.mockResolvedValue(user());
-    h.getConversation.mockResolvedValue(row());
-    h.restSelect.mockResolvedValue(account);
-    const res = await post(callback as Handler, { preferredTime: '  Friday morning  ', customerId: 'CUS-1002', user_email: 'evil@x.example' });
-    expect(res.status).toBe(200);
-    const [table, escalation] = h.restInsert.mock.calls[0];
-    expect(table).toBe('escalations');
-    expect(escalation).toMatchObject({
-      customer_id: 'CUS-1001',
-      conversation_id: 'vapi_abc',
-      user_name: 'Amara Okafor',
-      user_email: 'amara@lagosledger.example',
-      preferred_time: 'Friday morning',
-      contact_preference: 'callback',
-      status: 'open',
-    });
-    expect(JSON.stringify(escalation)).not.toContain('evil@x.example');
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ support_mode: 'ended', end_reason: 'user-ended' });
-    // The request is recorded before the chat is closed, so a failure never loses it.
-    expect(h.restInsert.mock.invocationCallOrder[0]).toBeLessThan(h.restPatch.mock.invocationCallOrder[0]);
-  });
-
-  it('works without a preferred time, and bounds a long one', async () => {
-    h.getCurrentUser.mockResolvedValue(user());
-    h.getConversation.mockResolvedValue(row());
-    h.restSelect.mockResolvedValue(account);
-    const escalations = () => h.restInsert.mock.calls.filter((c) => c[0] === 'escalations').map((c) => c[1] as { preferred_time: string | null });
-    await post(callback as Handler, {});
-    expect(escalations()[0]).toMatchObject({ preferred_time: null });
-    await post(callback as Handler, { preferredTime: 'x'.repeat(500) });
-    expect(escalations()[1].preferred_time).toHaveLength(100);
-  });
-
-  it('refuses bad input, other people\'s chats, closed chats and other sites; records nothing then', async () => {
-    h.getCurrentUser.mockResolvedValue(user());
-    h.getConversation.mockResolvedValue(row());
-    h.restSelect.mockResolvedValue(account);
-    expect((await post(callback as Handler, { preferredTime: 42 })).status).toBe(400);
-    expect((await post(callback as Handler, {}, { Origin: 'https://evil.example' })).status).toBe(403);
-    h.getConversation.mockResolvedValue(row({ support_mode: 'ended', ended_at: 'x' }));
-    expect((await post(callback as Handler, {})).status).toBe(409);
-    h.getConversation.mockResolvedValue(row({ customer_id: 'CUS-1002' }));
-    expect((await post(callback as Handler, {})).status).toBe(404);
-    expect(h.restInsert).not.toHaveBeenCalled();
-  });
-
-  it('does not leak detail when the database fails', async () => {
-    h.getCurrentUser.mockResolvedValue(user());
-    h.getConversation.mockResolvedValue(row());
-    h.restSelect.mockResolvedValue(account);
-    h.restInsert.mockRejectedValue(new Error('escalations insert failed (500)'));
-    const res = await post(callback as Handler, {});
-    expect(res.status).toBe(503);
-    expect(JSON.stringify(await res.json())).not.toMatch(/500|escalations/);
-    expect(h.restPatch).not.toHaveBeenCalled();
+describe('the callback route is gone (AC-18.1)', () => {
+  it('no longer exists: callbacks are arranged in the conversation, not by a customer form', async () => {
+    const dir = fileURLToPath(new URL('../../../apps/web/app/api/support/conversations/[id]/callback', import.meta.url));
+    expect(existsSync(dir)).toBe(false);
   });
 });
 

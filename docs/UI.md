@@ -63,7 +63,7 @@ GET /api/conversations/<id>/state   (server only, service role)
 
 | Topic | Decision |
 |---|---|
-| Desktop layout (single stack vs two columns) | Two columns on large screens (voice left, conversation right), one column below |
+| Desktop layout (single stack vs two columns) | **One column at every width** (Build Plan V3, V3.11): voice and status on top, conversation below. Was two columns on large screens |
 | Header label | "Customer Support", and "Support" on small screens |
 | Completion screen | "Support session complete" when a ticket or escalation exists, otherwise "Conversation ended" |
 | Landing copy | The section-46 wording ("...payments, payouts, invoices, fees, or account support.") |
@@ -93,6 +93,13 @@ it moves to the confirmation only after the form is submitted. A full accessibil
   server-clock handling and end-reason lookup (fake timers).
 - `tests/web/route.test.ts` and `tests/web/state-route.live.test.ts`: the state route with a fake and with the real
   database.
+- `tests/web/audio-resume.test.tsx`, `tests/web/auth/resume-route.test.ts`: the noise detector, mute notices, Vapi client mute/resume, the 30 second resume (fake clock) and its route.
+- `tests/web/feedback-ui.test.tsx`, `tests/web/auth/feedback-route.test.ts`: the rating component, rules and route.
+- `tests/web/staff-cost.test.ts`, `tests/web/staff-cost-ui.test.tsx`: the cost arithmetic, queries and queue display.
+- `tests/web/console.test.tsx`: stacked layout, bubbles, auto-scroll, the ended-screen matrix, typed converse, Type instead.
+- `tests/web/auth/text-turn.test.ts`: the typed-turn route.
+- `tests/web/retry.test.ts`, `tests/web/preflight.test.tsx`, `tests/web/microphone.test.ts`,
+  `tests/web/auth/support-api.test.ts`: the retry policy, the pre-call checks, the microphone check and the start/ready routes.
 
 ## Signed-in area (Iterations 6 and 7)
 
@@ -111,6 +118,68 @@ After a handoff the customer's `/support` page (and, on any later visit, `/suppo
 labelled message box (Enter sends, Shift+Enter makes a new line). It takes no focus and has no landmark of its own, so it
 can sit in a page or a future widget. Staff use `StaffChat` on the conversation page. Customer wording is in `SHELL_COPY.human`,
 staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
+
+### Console layout, bubbles, scrolling and typing (Build Plan V3, W3)
+
+- **Stacked.** `SupportWorkspace` is one column (`data-layout="stack"`, no `lg:grid-cols-2`) while a call is active and after it
+  ends (the completion screen above the transcript). The transcript has its own scroll region (`max-h-[60vh]`).
+- **Bubbles.** `ConversationTurn` is one bubble per turn: the customer's on the right (`bg-accent-soft`), support's on the
+  left, each with a speaker label; a partial turn is the same bubble, softened, updated in place.
+- **Auto-scroll.** `ConversationTranscript` sticks to the bottom as turns arrive and grow, pauses when the customer scrolls
+  more than 24px up, and follows again when they return to the bottom (`tests/web/console.test.tsx`).
+- **Type to converse.** While the call is live, `TypedComposer` (Enter sends, Shift+Enter makes a new line) sends the text into
+  the same call (`VoiceClient.send`) and shows it as the customer's turn. It is hidden while connecting or ending.
+- **Type instead.** On the microphone errors (permission refused, no microphone, unsupported browser) `ErrorState` offers
+  **Type instead**: `TextConversation` carries the conversation by typing alone (`useTextSession` →
+  `POST /api/support/text-turn` → the agent's `POST /text-turn`), tied to the signed-in customer, with the same assistant,
+  history and limits. A closer ends it and shows the same ended screen.
+- **Ended screen.** `ConversationComplete` has an explanation for every recorded end reason (`END_REASON_BODY` in `lib/copy.ts`;
+  a calm default while the reason is still being read), **Start another conversation**, and **View transcript**
+  (`/support/<id>`) only when the call is really saved to the customer's account.
+
+### Mute, noise and resume (Build Plan V3, W5)
+
+- **Muted / noisy notices.** `AudioNotices` is an `aria-live="polite"` region above the voice panel. It says the microphone is
+  muted when the provider reported it, and gives a noise advisory (never an accusation, never blocking) when an ambient level
+  sustained above the line; with no signal it is empty. The Vapi web SDK reports mute (polled once a second) but no ambient
+  level, so the noise advisory has no live source yet.
+- **Resume.** When a call ends the transcript stays and `ResumePrompt` offers **Resume conversation** / **No, thanks** for 30
+  seconds, with a countdown. Resume keeps the transcript and the conversation id; after 30 seconds (or "No, thanks") only
+  **Start another conversation** remains, which clears the transcript and starts a new conversation. A conversation that ended
+  by the time limit, a budget, noise, a specialist closing it, or a hand-over cannot be resumed. The star rating is held back
+  while the window is open. See `docs/VAPI.md`.
+
+### Ratings, history and staff cost (Build Plan V3, W4)
+
+- **Star ratings.** `SessionFeedback` (1 to 5 stars, optional comment, always skippable) sits on the ended screen beside
+  **Start another conversation** / **View transcript** (stage `ai`, only for a conversation saved to the customer's account),
+  and in the closed specialist chat (stage `human`). Each stage can be rated once; sending it again returns the first answer.
+  It writes `conversation_feedback` and nothing else.
+- **Past conversations.** `/support/history` lists every conversation, ten to a page (`?page=`, newest first), with the
+  outcome; each row opens the saved transcript. The navigation has a **Conversations** item and the dashboard card a **View
+  all** link. Legacy voice turns and specialist-chat messages are merged in `TranscriptView`.
+- **Staff cost.** The staff queue shows **Est. cost** per conversation and **Estimated cost today** (conversations started
+  since midnight UTC); the conversation page shows the same per-call estimate and the customer's ratings and comments. The
+  estimate is the sum of the turns' `cost_usd` (model usage only, never the voice provider's call cost, not a bill).
+  "Resolved" in the queue is the AI conversation's outcome, not a closed ticket.
+
+### Before a call starts (Build Plan V3, W1)
+
+Pressing **Start conversation** runs, in order, with nothing asked of the browser until the earlier steps pass:
+
+1. `GET /api/support/ready`: is support available? If not, the page shows the "Voice support isn't available right now" screen
+   (**Try again**, "please try again in a little while", and a link to the dashboard for urgent help). No call is started.
+2. `POST /api/support/start`: may this customer begin another call (one active conversation, creation rate)? A refusal
+   returns to the idle screen with the reason, without a call.
+3. The microphone check (`lib/voice/microphone.ts`): permission **and** an input device. Denied gives "We can't access your
+   microphone", no device gives "We couldn't find a microphone"; no call is created and nothing is retried automatically.
+   The idle screen explains this up front ("Before you start").
+
+Retry rule (one policy, `lib/retry.ts`): the first attempt plus at most **one** automatic retry (300 to 800 ms apart), only
+for temporary failures (network errors, 408/429/502/503/504). 401/403/404/409, validation errors and microphone problems are
+never retried. Applied to readiness, start, link and the state poll. **Try again** / **Start another conversation** start a
+new attempt with a fresh budget. While live status updates keep failing the page keeps the last good status and shows a quiet
+notice; it never names the failing part.
 
 ## Known limits
 

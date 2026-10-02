@@ -100,6 +100,11 @@ export default async function DashboardPage() {
                 ))}
               </ul>
             )}
+            {overview.conversations.length > 0 && (
+              <Link href="/support/history" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
+                {copy.viewAll}
+              </Link>
+            )}
           </Card>
         </div>
       </div>

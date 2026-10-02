@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TurnResult } from '../agent';
 import { ensureConversation, loadHistory, saveTurn } from '../history';
 import { errorMessage, logEvent } from '../logger';
-import { classifyCompletion, classifyConfirmation } from './completion';
+import { classifyCompletion, classifyConfirmation, looksLikeGibberish } from './completion';
 import {
   activeEarlierSessions,
   budgetExceeded,
@@ -12,7 +12,7 @@ import {
   loadUsage,
   lookupIdentity,
 } from './limits';
-import { endConversation, startHandoff } from './persist';
+import { endConversation, reopenConversation, startHandoff, type ReopenResult } from './persist';
 import {
   type ConversationEndReason,
   DEFAULT_SESSION_CONFIG,
@@ -36,6 +36,8 @@ const SHORT_INTERRUPT_MS = 500;
  * call starts, so a call still unlinked after a few turns is an anonymous one and stops costing a query per turn.
  */
 const MAX_IDENTITY_CHECKS = 4;
+/** Consecutive turns the speech recogniser heard only noise before the call is ended (end reason `low-confidence`). */
+export const MAX_GIBBERISH_STRIKES = 3;
 
 export type TurnDecision =
   | { kind: 'proceed' }
@@ -58,7 +60,11 @@ interface Session {
   resumePhase: SessionControlPhase;
   ended: boolean;
   turnInFlight: boolean;
-  /** Escalation contact form is open: the customer is expected to be quiet, so silence is not measured. */
+  /**
+   * An escalation is in progress but not recorded yet (the callback time is still being agreed in the conversation, or
+   * the tool call is running): the customer is expected to be thinking or typing, so silence is not measured. There is
+   * no form; this is never held for one.
+   */
   formPending: boolean;
   assistantSpeaking: boolean;
   userSpeaking: boolean;
@@ -86,9 +92,20 @@ interface Session {
   sessionChecksDone: boolean;
   globalCheckDone: boolean;
   identityChecks: number;
+  /** Consecutive turns that were noise rather than language. */
+  gibberishStrikes: number;
+  /**
+   * A typed conversation with no voice call (the customer could not use a microphone): no media to hang up, no silence
+   * or time limit (the per-conversation budgets still apply), and a closer ends the session at once.
+   */
+  textOnly: boolean;
   /** Waiting for the customer to hear the line that explains the handoff, then the call is hung up. */
   pendingHandoff?: { reason: HandoffReason; sawSpeech: boolean };
   pendingHandoffTimer?: ReturnType<typeof setTimeout>;
+  /** Fires when the link grace period runs out. */
+  linkTimer?: ReturnType<typeof setTimeout>;
+  /** When an unlinked call stops being allowed to continue (epoch ms); unset when linking is not required. */
+  linkDeadline?: number;
   silenceTimer?: ReturnType<typeof setTimeout>;
   countdownTimer?: ReturnType<typeof setTimeout>;
   warningTimer?: ReturnType<typeof setTimeout>;
@@ -120,6 +137,43 @@ export class SessionController {
     this.methods = opts.methods;
     this.control = opts.control ?? noopCallControl;
     this.config = opts.config ?? DEFAULT_SESSION_CONFIG;
+  }
+
+  /** Calls whose end-of-call reports must no longer end their conversation (it was resumed on a new call), per conversation. */
+  private readonly retiredCalls = new Map<string, Set<string>>();
+
+  /**
+   * Reopens a conversation that ended within the grace period for the customer who owns it (docs/BUILD-PLAN-V3.md V3.14).
+   * The persisted rule is `reopenConversation`; this also drops the in-memory session of the old call, so the new call
+   * starts a fresh one, and remembers the old call so its late end-of-call report cannot end the resumed conversation.
+   */
+  async reopen(conversationId: string, customerId: string | null): Promise<ReopenResult> {
+    const result = await reopenConversation(this.db, conversationId, { customerId });
+    if (result.reopened) {
+      const old = this.sessions.get(conversationId);
+      if (old) {
+        if (old.call.callId) {
+          const set = this.retiredCalls.get(conversationId) ?? new Set<string>();
+          set.add(old.call.callId);
+          if (this.retiredCalls.size > 200) this.retiredCalls.clear();
+          this.retiredCalls.set(conversationId, set);
+        }
+        this.clearTimers(old);
+        this.sessions.delete(conversationId);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * An end-of-call report from a call that is no longer this conversation's: the earlier call of a conversation that was
+   * resumed. Ignoring it keeps a late report from ending the resumed conversation again.
+   */
+  isStaleCallReport(conversationId: string, callId: string | undefined): boolean {
+    if (!callId) return false;
+    if (this.retiredCalls.get(conversationId)?.has(callId)) return true;
+    const live = this.sessions.get(conversationId)?.call.callId;
+    return Boolean(live && live !== callId);
   }
 
   /** Phase of a conversation's session, for tests and diagnostics. */
@@ -180,13 +234,17 @@ export class SessionController {
     conversationId: string;
     callId?: string;
     userMessage: string;
+    /** The turn came from the typed-conversation endpoint, not from a voice call. */
+    textOnly?: boolean;
   }): Promise<TurnDecision> {
     try {
-      const s = await this.ensure(input.conversationId, { callId: input.callId });
+      const s = await this.ensure(input.conversationId, { callId: input.callId }, Boolean(input.textOnly));
       // The AI does not come back after a handoff: a request that still reaches the voice path gets a fixed line.
       if (s.mode === 'human') return { kind: 'reply', text: SESSION_TEXT.humanActive };
       if (s.ended) return this.reply(s, input.userMessage, SESSION_TEXT.ended);
-      if (Date.now() >= s.startedAt + this.config.maxSeconds * 1000) {
+      const unlinked = await this.checkLinked(s, input.userMessage);
+      if (unlinked) return unlinked;
+      if (!s.textOnly && Date.now() >= s.startedAt + this.config.maxSeconds * 1000) {
         const decision = await this.reply(s, input.userMessage, SESSION_TEXT.timeout);
         await this.end(s, 'session-timeout');
         return decision;
@@ -205,12 +263,29 @@ export class SessionController {
       s.turnInFlight = true;
       s.formPending = false;
 
+      // Noise heard as words, turn after turn: the model is asked to have them repeat the first times, then the call is
+      // ended instead of listening to nothing. Any real turn starts the count again.
+      s.gibberishStrikes = looksLikeGibberish(input.userMessage) ? s.gibberishStrikes + 1 : 0;
+      if (s.gibberishStrikes >= MAX_GIBBERISH_STRIKES) {
+        s.turnInFlight = false;
+        await this.logEvent(s, 'low_confidence', 'call ended: several turns could not be understood', {
+          strikes: s.gibberishStrikes,
+        });
+        return this.closeAfterReply(s, input.userMessage, SESSION_TEXT.lowConfidence, { end: 'low-confidence' });
+      }
+
       const wasConfirming = s.phase === 'awaiting-confirmation';
       if (wasConfirming) s.phase = 'active';
       const completion = classifyCompletion(input.userMessage);
       const closing =
         completion === 'clear' || (wasConfirming && classifyConfirmation(input.userMessage) === 'end');
       if (closing || completion === 'ambiguous') s.turnInFlight = false; // answered here, no model turn follows
+      if (closing && s.textOnly) {
+        // Nothing is spoken, so there is no "finished playing" to wait for: say goodbye and end the session now.
+        const decision = await this.reply(s, input.userMessage, SESSION_TEXT.goodbye);
+        await this.end(s, 'user-ended');
+        return decision;
+      }
       if (closing) {
         s.phase = 'ending';
         s.pendingEnd = { reason: 'user-ended', sawSpeech: false };
@@ -250,7 +325,7 @@ export class SessionController {
     const s = this.sessions.get(conversationId);
     if (!s || s.ended) return;
     s.turnInFlight = false;
-    // The contact form is open until the escalation record exists (not merely until the model asks for the details).
+    // Held until the escalation record exists (not merely until the model asks for the callback time).
     s.formPending = result?.answerType === 'escalation' && !result.escalationCreated;
     if (result) {
       s.agentCalls += 1;
@@ -299,7 +374,7 @@ export class SessionController {
     return { kind: 'reply', text };
   }
 
-  private async ensure(conversationId: string, call: CallHandle): Promise<Session> {
+  private async ensure(conversationId: string, call: CallHandle, textOnly = false): Promise<Session> {
     const existing = this.sessions.get(conversationId);
     if (existing) {
       existing.call.callId ??= call.callId;
@@ -363,6 +438,8 @@ export class SessionController {
       sessionChecksDone: false,
       globalCheckDone: false,
       identityChecks: 0,
+      gibberishStrikes: 0,
+      textOnly,
       turnInFlight: false,
       formPending: false,
       assistantSpeaking: false,
@@ -376,11 +453,45 @@ export class SessionController {
     };
     this.sessions.set(conversationId, s);
     // A human conversation has no time limit and no silence timer: staff and the customer set the pace.
-    if (!alreadyEnded && mode === 'ai') {
+    if (!alreadyEnded && mode === 'ai' && !textOnly) {
       this.scheduleLimits(s);
       this.armSilence(s);
+      this.scheduleLinkGrace(s);
     }
     return s;
+  }
+
+  /**
+   * Signed-in callers only: the web app links a new call to the customer a second or two after it starts. A call that
+   * is still unlinked when the grace period runs out is ended, so no one can keep an anonymous call going.
+   */
+  private scheduleLinkGrace(s: Session) {
+    if (!this.config.requireLink || s.customerId) return;
+    const graceMs = this.config.linkGraceSeconds * 1000;
+    s.linkDeadline = Date.now() + graceMs;
+    s.linkTimer = unref(setTimeout(() => void this.linkGraceExpired(s), graceMs));
+  }
+
+  private async linkGraceExpired(s: Session) {
+    if (s.ended || s.mode === 'human' || s.customerId) return;
+    await this.refreshIdentity(s);
+    if (s.customerId || s.ended || this.isHuman(s)) return;
+    await this.logEvent(s, 'unlinked_call', 'call ended: no signed-in customer after the grace period', {
+      grace_seconds: this.config.linkGraceSeconds,
+    });
+    await this.end(s, 'error', { line: SESSION_TEXT.notSignedIn });
+  }
+
+  /**
+   * Turn-time half of the link rule. While the grace period runs, look for the link on each turn (cheap, and it lands
+   * in a second or two); once it has passed with no customer, the turn gets the fixed line and the call ends.
+   */
+  private async checkLinked(s: Session, userMessage: string): Promise<TurnDecision | undefined> {
+    if (!this.config.requireLink || s.customerId || s.linkDeadline === undefined) return undefined;
+    await this.refreshIdentity(s);
+    if (s.customerId) return undefined;
+    if (Date.now() < s.linkDeadline) return undefined;
+    return this.closeAfterReply(s, userMessage, SESSION_TEXT.notSignedIn, { end: 'error' });
   }
 
   private scheduleLimits(s: Session) {
@@ -483,7 +594,11 @@ export class SessionController {
   }
 
   /** Persist first (so the customer UI can read the reason when the call drops), then hang up. Idempotent. */
-  private async end(s: Session, reason: ConversationEndReason, opts: { speak?: boolean } = {}) {
+  private async end(
+    s: Session,
+    reason: ConversationEndReason,
+    opts: { speak?: boolean; line?: string } = {},
+  ) {
     if (s.ended) return;
     s.ended = true;
     s.phase = 'ending';
@@ -499,16 +614,41 @@ export class SessionController {
     }
     s.phase = 'ended';
     await this.recordVoiceStats(s);
-    try {
-      const spoke = opts.speak
-        ? await this.control.say(s.call, SESSION_TEXT.timeout, { endAfter: true })
-        : false;
-      if (!spoke) await this.control.endCall(s.call);
-    } catch (error) {
-      logEvent('warn', 'session hang-up failed', {
-        conversation_id: s.conversationId,
-        message: errorMessage(error),
-      });
+    await this.hangUp(s, opts.line ?? (opts.speak ? SESSION_TEXT.timeout : undefined));
+  }
+
+  /**
+   * Make the media stop. Speaking a closing line with "end after spoken" is preferred; if that is unavailable or throws,
+   * or there is no line, end the call directly, and try that once more if the first attempt did not take. When every
+   * server-side route fails the conversation is already recorded as ended, so the customer's page (which watches for
+   * `ended`) and Vapi's own max-duration limit are the remaining layers; the failure is written to the event log.
+   */
+  private async hangUp(s: Session, line?: string) {
+    // A typed conversation has no call to hang up.
+    if (s.textOnly) return;
+    let stopped = false;
+    if (line) {
+      try {
+        stopped = await this.control.say(s.call, line, { endAfter: true });
+      } catch (error) {
+        logEvent('warn', 'session closing line failed', {
+          conversation_id: s.conversationId,
+          message: errorMessage(error),
+        });
+      }
+    }
+    for (let attempt = 0; attempt < 2 && !stopped; attempt++) {
+      try {
+        stopped = await this.control.endCall(s.call);
+      } catch (error) {
+        logEvent('warn', 'session hang-up failed', {
+          conversation_id: s.conversationId,
+          message: errorMessage(error),
+        });
+      }
+    }
+    if (!stopped) {
+      await this.logEvent(s, 'hangup_failed', 'the call could not be ended from the server', {});
     }
   }
 
@@ -596,6 +736,13 @@ export class SessionController {
     then: { end: ConversationEndReason } | { handoff: HandoffReason },
   ): Promise<TurnDecision> {
     s.phase = 'ending';
+    if (s.textOnly) {
+      // Nothing is spoken: write the line, then end (or hand over) straight away.
+      const decision = await this.reply(s, userMessage, text);
+      if ('end' in then) await this.end(s, then.end);
+      else await this.handoff(s, then.handoff);
+      return decision;
+    }
     if ('end' in then) {
       s.pendingEnd = { reason: then.end, sawSpeech: false };
       s.pendingEndTimer = unref(setTimeout(() => void this.end(s, then.end), PENDING_END_FALLBACK_MS));
@@ -723,6 +870,7 @@ export class SessionController {
       'hardTimer',
       'pendingEndTimer',
       'pendingHandoffTimer',
+      'linkTimer',
     ] as const) {
       if (s[key]) clearTimeout(s[key]);
       s[key] = undefined;

@@ -25,7 +25,23 @@ export function isErrorResult(r: ToolResult): r is ToolErrorResult {
   return 'error' in r && typeof r.error === 'object';
 }
 
+/** The signed-in customer a conversation is linked to, as the server knows it (never taken from the model). */
+export interface CallerIdentity {
+  customerId: string;
+  userId: string | null;
+  /** Account display name and email, for contact fields. Null if the account row could not be read. */
+  name: string | null;
+  email: string | null;
+}
+
 export interface ToolContext {
+  /**
+   * Set by `executeTool` for account-scoped tools once the conversation's link has been read: the signed-in customer,
+   * or null when the conversation is not linked.
+   */
+  identity?: CallerIdentity | null;
+  /** Refuse account-scoped tools for a conversation that is not linked to a signed-in customer (production). */
+  requireIdentity?: boolean;
   /** Conversation id supplied by the caller (for example the X-Conversation-Id header). */
   conversationId?: string;
   /**
@@ -64,7 +80,20 @@ export async function executeTool(
   } else {
     conversationId = tool.conversationId?.(parsed.data) ?? ctx.conversationId;
     try {
-      result = await tool.run(parsed.data, store, ctx);
+      let runCtx = ctx;
+      if (tool.accountScoped) {
+        // Who is this conversation for? Read from the database, never from the model's arguments. A failed read fails
+        // closed (the tool errors) rather than falling back to an unscoped lookup.
+        const identity = conversationId ? await resolveIdentity(store, conversationId) : null;
+        if (!identity && ctx.requireIdentity) {
+          throw new ToolError(
+            'not_authorized',
+            'This conversation is not linked to a signed-in customer, so account information cannot be looked up. Tell the customer to sign in and start a new conversation.',
+          );
+        }
+        runCtx = { ...ctx, identity };
+      }
+      result = await tool.run(parsed.data, store, runCtx);
     } catch (error) {
       if (error instanceof ToolError) {
         result = errorResult(error.code, error.message);
@@ -93,6 +122,19 @@ export async function executeTool(
     await recorded;
   }
   return result;
+}
+
+/** Reads the link the web app wrote onto the conversation, plus the account's name and email. */
+export async function resolveIdentity(store: Store, conversationId: string): Promise<CallerIdentity | null> {
+  const link = await store.getConversationIdentity(conversationId);
+  if (!link?.customer_id) return null;
+  const user = link.user_id ? await store.getAppUser(link.user_id) : null;
+  return {
+    customerId: link.customer_id,
+    userId: link.user_id,
+    name: user?.display_name ?? null,
+    email: user?.email ?? null,
+  };
 }
 
 async function recordCall(

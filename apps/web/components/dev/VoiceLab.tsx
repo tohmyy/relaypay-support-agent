@@ -69,6 +69,8 @@ export default function VoiceLab({
 
   const vapi = useRef<VapiLike | null>(null);
   const call = useRef<unknown>(null);
+  // Whether there is a call to reconnect to, for the button (a ref cannot be read while rendering).
+  const [hasCall, setHasCall] = useState(false);
   const t0 = useRef<number | null>(null);
 
   const log = useCallback((kind: LabKind, text: string) => {
@@ -116,6 +118,7 @@ export default function VoiceLab({
           return;
         }
         call.current = started;
+        setHasCall(Boolean(started));
         setCallId(id);
         log('note', `call id ${id}; conversation id vapi_${id}`.slice(0, 120));
       } catch (error) {
@@ -231,7 +234,7 @@ export default function VoiceLab({
           <button type="button" className={BUTTON} disabled={!live} onClick={leave}>
             Leave (stop)
           </button>
-          <button type="button" className={BUTTON} disabled={live || status === 'starting' || !call.current} onClick={reconnect}>
+          <button type="button" className={BUTTON} disabled={live || status === 'starting' || !hasCall} onClick={reconnect}>
             Reconnect
           </button>
           <button type="button" className={BUTTON} disabled={!live} onClick={end}>

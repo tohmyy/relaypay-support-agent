@@ -1,5 +1,6 @@
 import type { KbResult } from '../retrieval/retrieve';
 import type { ContactContext } from './chat-offer';
+import type { AuthenticatedCustomer } from './identity';
 
 export interface HistoryTurn {
   user: string;
@@ -17,6 +18,13 @@ export interface PromptParts {
    * is possible for them), and for a text chat the customer's own account details. Absent means the normal callback procedure.
    */
   contact?: ContactContext;
+  /**
+   * The signed-in customer this conversation is linked to, read from the database (never from the caller). Absent while
+   * the link has not landed yet.
+   */
+  authenticated?: AuthenticatedCustomer | null;
+  /** The current time, so words like "tomorrow at 2 pm" can become an exact date. Omitted in tests that compare prompts. */
+  now?: Date;
 }
 
 /** Stops user, document or history text from closing or forging a prompt block. */
@@ -40,12 +48,22 @@ export function formatHistory(history: HistoryTurn[]): string {
     .join('\n\n');
 }
 
+/** The verified identity block. The email is for escalation contact only; the assistant never reads it aloud. */
+export function formatAuthenticated(c: AuthenticatedCustomer): string {
+  const lines = [`customer_id: ${escapeBlock(c.customerId)}`];
+  if (c.displayName) lines.push(`display_name: ${escapeBlock(c.displayName)}`);
+  if (c.email) lines.push(`email: ${escapeBlock(c.email)}`);
+  if (c.companyName) lines.push(`company_name: ${escapeBlock(c.companyName)}`);
+  return `<authenticated_customer>\n${lines.join('\n')}\n</authenticated_customer>`;
+}
+
 export function buildPrompt(p: PromptParts): string {
   const blocks = [
     `<conversation_id>${escapeBlock(p.conversationId)}</conversation_id>`,
     `<retrieved_knowledge>\n${formatKnowledge(p.knowledge)}\n</retrieved_knowledge>`,
     `<conversation_history>\n${formatHistory(p.history)}\n</conversation_history>`,
   ];
+  if (p.now) blocks.push(`<current_time>${p.now.toISOString()}</current_time>`);
   if (p.escalationRaised) {
     blocks.push(
       '<escalation_already_raised>A human handoff was already created on this call. Do not re-diagnose.</escalation_already_raised>',
@@ -56,12 +74,8 @@ export function buildPrompt(p: PromptParts): string {
     blocks.push(
       `<contact_methods text_chat="${yn(p.contact.textChat)}" callback="${yn(p.contact.callback)}" staff_online="${yn(p.contact.staffOnline)}">Ways of reaching a person for this caller. If escalation is required, follow "Contact methods".</contact_methods>`,
     );
-    if (p.contact.textChat && p.contact.customer) {
-      blocks.push(
-        `<signed_in_customer>\nname: ${escapeBlock(p.contact.customer.name)}\nemail: ${escapeBlock(p.contact.customer.email)}\n</signed_in_customer>`,
-      );
-    }
   }
+  if (p.authenticated) blocks.push(formatAuthenticated(p.authenticated));
   blocks.push(`<current_user_message>\n${escapeBlock(p.userMessage)}\n</current_user_message>`);
   return blocks.join('\n\n');
 }

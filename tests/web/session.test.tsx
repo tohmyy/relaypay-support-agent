@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { contactMessage, useVoiceSession } from '@/hooks/useVoiceSession';
+import { useVoiceSession } from '@/hooks/useVoiceSession';
 import type { PublicConversationState } from '@/lib/conversation-state';
 import { emptyBackendState } from '@/lib/support/derive';
 import { MockVoiceClient } from '@/lib/voice/mock-client';
@@ -114,7 +114,7 @@ describe('useVoiceSession', () => {
     expect(s.createClient).toHaveBeenCalledTimes(1);
   });
 
-  it('follows the backend into escalation, sends the typed details, and confirms', async () => {
+  it('follows the backend into escalation and confirms, without sending or showing any form (the time is agreed in the conversation)', async () => {
     let backend: PublicConversationState = { ...emptyBackendState, answerType: 'escalation' };
     const s = setup({ backend: () => backend });
     await startCall(s);
@@ -123,18 +123,12 @@ describe('useVoiceSession', () => {
     // Poll picks up the escalation requirement.
     await waitFor(() => expect(s.hook.result.current.support).toBe('escalation-required'));
     expect(s.fetchState).toHaveBeenCalledWith('vapi_test-call');
+    expect(s.client.sent).toEqual([]);
+    expect('submitContact' in s.hook.result.current).toBe(false);
 
-    act(() => s.hook.result.current.submitContact({ name: ' Ada ', email: 'ada@example.com', preferredTime: 'Tuesday at 2 PM' }));
-    expect(s.client.sent).toEqual([
-      'My name is Ada. My email address is ada@example.com. The best time for a callback is Tuesday at 2 PM.',
-    ]);
-    expect(s.hook.result.current.support).toBe('escalating');
-    expect(s.hook.result.current.turns.at(-1)?.speaker).toBe('user');
-    expect(s.hook.result.current.turns.at(-1)?.text).not.toContain('ada@example.com');
-
-    backend = { ...emptyBackendState, answerType: 'escalation', escalation: { requestedTime: 'Tuesday at 2 PM' } };
+    backend = { ...emptyBackendState, answerType: 'escalation', escalation: { requestedTime: 'Tue, 6 Oct 2026, 2:00 pm (Africa/Lagos)' } };
     await waitFor(() => expect(s.hook.result.current.support).toBe('escalated'));
-    expect(s.hook.result.current.backend.escalation?.requestedTime).toBe('Tuesday at 2 PM');
+    expect(s.hook.result.current.backend.escalation?.requestedTime).toContain('Africa/Lagos');
   });
 
   it('keeps its last state when the backend cannot be reached', async () => {
@@ -143,14 +137,5 @@ describe('useVoiceSession', () => {
     act(() => s.client.handlers!.onCallStart());
     await new Promise((r) => setTimeout(r, 60));
     expect(s.hook.result.current.backend).toEqual(emptyBackendState);
-  });
-});
-
-describe('contactMessage', () => {
-  it('reads as a natural sentence, with the time only when given', () => {
-    expect(contactMessage({ name: 'Ada', email: 'a@b.co' })).toBe('My name is Ada. My email address is a@b.co.');
-    expect(contactMessage({ name: 'Ada', email: 'a@b.co', preferredTime: '  ' })).toBe(
-      'My name is Ada. My email address is a@b.co.',
-    );
   });
 });

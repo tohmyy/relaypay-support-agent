@@ -31,6 +31,7 @@ describe.skipIf(!live)('agent decisions (live model)', () => {
     if (!live) return;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     for (const c of convs) {
+      await db.from('escalations').delete().eq('conversation_id', c);
       const { data: tickets } = await db.from('support_tickets').select('ticket_id').eq('conversation_id', c);
       const ids = (tickets ?? []).map((t) => t.ticket_id);
       if (ids.length) await db.from('escalations').delete().in('ticket_id', ids);
@@ -43,6 +44,24 @@ describe.skipIf(!live)('agent decisions (live model)', () => {
     await db.from('tool_calls').delete().is('conversation_id', null).gte('created_at', new Date(runId).toISOString());
     await db.from('retrieval_logs').delete().is('conversation_id', null).gte('created_at', new Date(runId).toISOString());
   });
+
+
+  // Escalations take the customer's name and email from the signed-in account, so these conversations are linked to a
+  // seeded customer account first (the web app's link does this in production). Skips the test if none is seeded.
+  async function account() {
+    const { data } = await db
+      .from('app_users')
+      .select('id, display_name, email')
+      .eq('role', 'customer')
+      .eq('customer_id', 'CUS-1001')
+      .limit(1);
+    return data?.[0] as { id: string; display_name: string; email: string } | undefined;
+  }
+  async function linkTo(conversationId: string, acct: { id: string }) {
+    await db
+      .from('conversations')
+      .upsert({ conversation_id: conversationId, channel: 'voice', customer_id: 'CUS-1001', user_id: acct.id }, { onConflict: 'conversation_id' });
+  }
 
   const conv = (name: string) => {
     const id = `test-agent-${name}-${runId}`;
@@ -102,13 +121,20 @@ describe.skipIf(!live)('agent decisions (live model)', () => {
     expect(r.response).not.toMatch(/normal support access|approved|kyc/i);
   }, 90_000);
 
-  it('collects details, creates an escalation, then stops troubleshooting', async () => {
+  it('asks for a specific callback time (never a name or email), creates the escalation from the account, then stops troubleshooting', async () => {
+    const acct = await account();
+    if (!acct) return;
     const c = conv('flow');
-    await say(c, 'I want to dispute a charge on my account, I need a refund.');
-    await say(c, 'My name is Test Person and my email is agent-test@example.com.');
-    const r3 = await say(c, 'Tomorrow morning works for a call.');
-    const { data } = await db.from('escalations').select('*').eq('user_email', 'agent-test@example.com');
+    await linkTo(c, acct);
+    const r1 = await say(c, 'I want to dispute a charge on my account, I need a refund.');
+    expect(r1.response).not.toMatch(/\b(your|full) (name|email)|email address/i);
+    const r2 = await say(c, 'Please arrange a callback.');
+    expect(r2.toolsUsed).not.toContain('create_escalation'); // no specific time yet
+    const r3 = await say(c, 'Tomorrow at 10am works for a call, I am in Lagos.');
+    const { data } = await db.from('escalations').select('*').eq('conversation_id', c);
     expect(data?.length ?? 0).toBeGreaterThan(0);
+    expect(data![0]).toMatchObject({ user_email: acct.email, user_name: acct.display_name, customer_id: 'CUS-1001' });
+    expect(data![0].preferred_at).toBeTruthy();
     expect(r3.escalated).toBe(true);
     const r4 = await say(c, 'Any update on my dispute?');
     expect(r4.answerType).toBe('escalation');

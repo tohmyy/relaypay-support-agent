@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { formatWait } from '@/lib/human/notify';
-import type { QueueItem, QueueState } from '@/lib/dashboard/staff';
+import { formatUsd, type QueueItem, type QueueState } from '@/lib/dashboard/staff';
 import type { StatusTone } from '@/lib/dashboard/format';
 import { STAFF_COPY } from '@/lib/shell-copy';
 import { DataTable, EmptyState, StatusBadge } from './ui';
@@ -44,6 +44,7 @@ export default function QueueTable({ items, caption, now }: { items: QueueItem[]
         },
         { header: copy.waiting, cell: (i) => (i.waitingSince ? formatWait(i.waitingSince, now) : '—'), className: 'whitespace-nowrap' },
         { header: copy.ticket, cell: (i) => i.ticket ?? '—' },
+        { header: copy.cost, cell: (i) => (i.estimatedCostUsd == null ? STAFF_COPY.queue.costUnknown : formatUsd(i.estimatedCostUsd)), className: 'whitespace-nowrap' },
         { header: copy.started, cell: (i) => i.started, className: 'whitespace-nowrap' },
       ]}
     />

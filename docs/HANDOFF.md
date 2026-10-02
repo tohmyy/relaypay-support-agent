@@ -12,17 +12,22 @@ when already signed in), so every call comes from a signed-in customer on `/supp
 
 1. A signed-in customer talks to the voice assistant on `/support`. The page ties the call to their account
    (`POST /api/support/link`, `docs/AUTH.md`), so the agent service can see `conversations.customer_id`.
-2. On each turn (until an escalation exists) the agent looks up, in parallel with its knowledge search and cached for a short
-   time, **the customer's own account contact details** and **whether any staff member is online**. Both are given to the
-   assistant as `<signed_in_customer>` and `<text_chat_available staff_online="...">` blocks.
-3. When escalation is needed the assistant says a specialist must handle it and **asks one question**: text chat now, or a
-   callback. If a specialist is online it says one is available now; if not, that the team will reply as soon as someone is
-   free and that the customer can ask for a callback instead at any time. While it waits for the answer it keeps
-   `answer_type` as `clarification`, so the contact form does not appear early.
-4. **Text chat chosen**: it does not ask for name, email or time. It creates the ticket and the escalation with the account
-   details and `contact_preference: "text_chat"`, then says a specialist will continue by text in the same window and that
-   the call is ending. **Callback chosen**: the usual procedure (name, email, preferred time, the contact form) with
-   `contact_preference: "callback"`, and the call stays up.
+2. On each turn the agent gives the assistant **who the customer is** (an `<authenticated_customer>` block read from the
+   signed-in account, `docs/AUTH.md`), and, until an escalation exists, looks up in parallel with its knowledge search and
+   cached for a short time **which contact methods are on** and **whether any staff member is online**
+   (`<contact_methods ... staff_online="...">`).
+3. The assistant **diagnoses before it escalates** (ask for a missing reference, look it up, summarise what it found), then
+   says a specialist must handle it and **asks one question**: text chat now, or a callback. If a specialist is online it
+   says one is available now; if not, that the team will reply as soon as someone is free and that the customer can ask for a
+   callback instead at any time. While it waits for the answer it keeps `answer_type` as `clarification`.
+4. **There are no forms.** The customer's name and email always come from their signed-in account; the assistant never asks
+   for them, and the tool server (`create_escalation`) overwrites whatever it is given with the account's. **Text chat
+   chosen**: it creates the ticket and the escalation with `contact_preference: "text_chat"`, then says a specialist will
+   continue by text in the same window and that the call is ending. **Callback chosen**: it asks, by voice or in typed chat,
+   for a **specific day, time and timezone** (never "later" or "no preference"), then creates the escalation with
+   `contact_preference: "callback"`, `preferred_at` and `preferred_timezone`. The tool server rejects a time in the past or
+   more than one calendar month ahead (measured in the customer's timezone) with a message the assistant uses to ask again;
+   the call stays up.
 5. The agent reads the choice from the `create_escalation` call itself (not from what the model says). Only
    `text_chat` moves the conversation (`controller.ts`, `armHandoff` / `handoff`): after the confirmation has finished
    playing (or after 10 seconds), `support_mode` becomes `human`, `handoff_at` is stamped, a system message and a
@@ -30,8 +35,9 @@ when already signed in), so every call comes from a signed-in customer on `/supp
 6. The customer's page notices (`supportMode: "human"` in the state API), stops its own call if still up, and shows the chat.
    Reloading `/support`, or opening the dashboard, finds the open conversation again.
 7. Staff see it under **Waiting for staff** in a **live queue** (below), take it (or just reply, which takes it), and chat.
-   They can **return it to the queue** or **close** it (`end_reason = human-closed`). The customer can **end the chat** or
-   **ask for a callback instead** (which records a callback request and closes the chat).
+   They can **return it to the queue** or **close** it (`end_reason = human-closed`). The customer can **end the chat**. A
+   customer who would rather be called says so in the message box and the specialist arranges it with them there; there is no
+   callback form or button.
 
 If the hand-over cannot be saved, the call simply carries on as an AI call. If the hang-up fails, the page still stops the
 call and the conversation is already `human`. If the account has no contact details, or a lookup fails, no offer is made and
@@ -45,7 +51,7 @@ agents are sent back to the queue). It lists the ways of reaching a person and l
 | Method | Can be switched | What turning it off does |
 |---|---|---|
 | Live text chat | yes | The assistant stops offering the chat; a customer is never moved to one. Chats already under way carry on. |
-| Callback request | yes | The assistant stops offering a callback and the contact form is not used; the waiting chat no longer shows "Request a callback instead" and the server refuses callback requests. |
+| Callback request | yes | The assistant stops offering a callback; the waiting chat stops suggesting that the customer ask for one. |
 | Live phone call | no (shown as "not available yet") | Nothing is built for it. |
 
 At least one method must stay on, so a customer who needs a person always has a way to reach one (the page and the server both
@@ -60,7 +66,7 @@ How it takes effect (`app_settings`, key `contact_methods`, `{"text_chat": true,
 - **The voice agent** also checks the setting before it moves anyone to a chat, so a model that ignores its instructions still
   cannot start a chat that is switched off.
 - **The customer's chat** (`callbackAvailable` in the messages response, cached ~10 seconds on the web server) hides the
-  callback button and its wording; `POST …/callback` answers 403 `method-disabled`.
+  wording that suggests asking for a callback.
 - A change is used within roughly 15 seconds everywhere. If the setting cannot be read, both methods count as on. A stored value
   with both off (the page never saves one) is read as both on.
 - Text chat also needs `HUMAN_HANDOFF=1` on the voice agent; the setting cannot turn on something the agent has off.
@@ -68,11 +74,9 @@ How it takes effect (`app_settings`, key `contact_methods`, `{"text_chat": true,
 ## What the customer sees while waiting
 
 - If a specialist is online: "A specialist is online and will join you shortly." Otherwise: "Our team will reply as soon as
-  someone is free. You can ask for a callback instead at any time."
-- How long they have waited. After three minutes: "Still waiting? We can arrange a callback instead." and the callback button
-  becomes the main action.
-- **Request a callback instead**: an optional "good time to call", then a callback request is recorded from the account
-  details (never from the request) and the chat is closed so staff stop seeing it as waiting.
+  someone is free. If you would rather have a callback, tell us a day and time in the message box."
+- How long they have waited. After three minutes: "Still waiting? Tell us in the message box when you would like a callback
+  and we will arrange it." There is no callback form or button (Build Plan V3, concern 18).
 - Once a specialist joins: their name and title, a "typing" line, messages as they arrive, "Seen" under the latest message
   they have read, and "Sending… / Not sent. Try again" on the customer's own messages.
 
@@ -128,7 +132,6 @@ request for a human conversation gets a fixed line (`SESSION_TEXT.humanActive`),
 | `GET/POST /api/support/conversations/[id]/messages` | the customer who owns it | read (`?after=` cursor; also the specialist, what they have read, wait time, whether anyone is online) and send (optional `clientId`); anyone else gets the same empty answer as for an unknown id |
 | `POST …/typing`, `POST …/read` | the owner | typing signal; "I have read it" |
 | `POST …/end` | the owner | end the chat |
-| `POST …/callback` | the owner | record a callback request from the account details, then end the chat |
 | `GET/POST /api/staff/conversations/[id]/messages` | staff | read, and reply (replying to an unassigned conversation takes it) |
 | `POST …/claim`, `POST …/release`, `POST …/close` | staff | take it (one winner, the other gets 409 `taken`); return it to the queue (the assignee or an admin); close it (the assignee or an admin) |
 | `POST …/typing`, `POST …/read` | staff | typing signal; "I have read it" (recorded only for the assignee) |
@@ -156,12 +159,17 @@ agent or an admin.
 ## Known limits
 
 - Only signed-in customers can be offered the chat (it needs an identity to authorise against). There is no guest chat.
+- The callback time is agreed in the conversation and validated by the tool server (not in the past, within one calendar
+  month, timezone-aware); the assistant's asking for a *specific* time is prompt behaviour, the validation is not.
 - The assistant's wording and its use of `clarification` while asking are prompt behaviour, not enforced. The hand-over
   itself depends only on the recorded `contact_preference`: no recorded choice means the call stays up as a callback.
 - "Live" means polling about every two seconds, not instant, and it costs requests per open chat.
 - "Online" means a staff browser tab is open, sending heartbeats. Nothing closes a queued chat nobody picks up: the customer is
-  nudged towards a callback after three minutes, and can leave at any time.
+  nudged towards asking for a callback in the chat after three minutes, and can leave at any time.
 - The link lands a second or two after the call starts. A conversation that escalates before the link exists is not offered
   the chat.
-- No file attachments, no canned replies, no transfer between agents (only return-to-queue), no avatar upload, and no
-  feedback prompt after a chat closes.
+- No file attachments, no canned replies, no transfer between agents (only return-to-queue) and no avatar upload.
+- **Rating the specialist** (Build Plan V3, V3.9): once the chat is closed the customer's page offers an optional 1 to 5 star
+  rating with a comment (`stage = human`); the rating of the voice or typed leg is a separate one (`stage = ai`). Both are
+  stored in `conversation_feedback`, shown to staff on the conversation page, and **never** change the conversation's status,
+  end reason or a ticket (`POST /api/support/conversations/<id>/feedback`).

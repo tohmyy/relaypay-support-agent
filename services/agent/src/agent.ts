@@ -7,6 +7,7 @@ import { applyGuard } from './guard';
 import { recordError } from './observability';
 import { ensureConversation, loadHistory, saveTurn } from './history';
 import { chatOfferSourceFor, type ContactContext } from './chat-offer';
+import { identitySourceFor, type AuthenticatedCustomer } from './identity';
 import { buildPrompt, retrievalQuery } from './prompt';
 import { answerJsonSchema, parseAnswer, type AnswerType } from './schema';
 import { getSupabase } from './supabase';
@@ -74,6 +75,8 @@ export interface AgentDeps {
    * chat is possible, account contact details, whether anyone is online).
    */
   contactContext?: (customerId: string | null, handoffEnabled: boolean) => Promise<ContactContext | undefined>;
+  /** Looks up the signed-in customer (account name, email, company) for the linked conversation. */
+  identity?: (customerId: string | null, userId: string | null) => Promise<AuthenticatedCustomer | null>;
 }
 
 /** The options for a pre-started agent process for one conversation (same as a cold turn would use). */
@@ -210,8 +213,17 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
           history.customerId,
           Boolean(deps.humanHandoff),
         );
-    const [retrieval, contact] = await timer.span('retrieval_ms', () =>
-      Promise.all([retrieve(retrievalQuery(userMessage, history.turns), { conversationId }), contactPromise]),
+    // Who this conversation is for. Re-read from the database every turn (the link can land after the first one) and
+    // cached once found, so the model always works for the customer the server knows, not one the caller names.
+    const identityPromise: Promise<AuthenticatedCustomer | null> = (
+      deps.identity ?? ((customerId, userId) => identitySourceFor(db).get(customerId, userId))
+    )(history.customerId, history.userId);
+    const [retrieval, contact, authenticated] = await timer.span('retrieval_ms', () =>
+      Promise.all([
+        retrieve(retrievalQuery(userMessage, history.turns), { conversationId }),
+        contactPromise,
+        identityPromise,
+      ]),
     );
     const knowledge = retrieval.chunks;
     if (progress && knowledge.length > 0) progress.knowledge = true;
@@ -223,6 +235,8 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       knowledge,
       escalationRaised: history.escalationRaised,
       contact,
+      authenticated,
+      now: new Date(),
     });
 
     // Run the model and watch its tool traffic.

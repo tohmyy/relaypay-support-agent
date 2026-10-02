@@ -22,7 +22,8 @@ export function sessionConfigFromEnv(
     | 'SESSION_RATE_WINDOW_SECONDS'
     | 'GLOBAL_SESSION_RATE_MAX'
     | 'GLOBAL_SESSION_RATE_WINDOW_SECONDS'
-  >,
+  > &
+    Partial<Pick<Env, 'AGENT_REQUIRE_LINK' | 'LINK_GRACE_SECONDS'>>,
 ): SessionConfig {
   const ratesOn = rateLimitsEnabled();
   return {
@@ -32,6 +33,10 @@ export function sessionConfigFromEnv(
     silenceSeconds: env.SILENCE_TIMEOUT_SECONDS,
     countdownSeconds: env.SILENCE_COUNTDOWN_SECONDS,
     humanHandoff: env.HUMAN_HANDOFF === '1',
+    // Signed-in callers only. Like the rate limits this is on by default only in production, so local anonymous test
+    // calls keep working; AGENT_REQUIRE_LINK=1/0 overrides either way.
+    requireLink: env.AGENT_REQUIRE_LINK ? env.AGENT_REQUIRE_LINK === '1' : rateLimitsEnabled(),
+    linkGraceSeconds: env.LINK_GRACE_SECONDS ?? 10,
     limits: {
       maxAgentCalls: env.MAX_AGENT_CALLS,
       maxToolCalls: env.MAX_TOOL_CALLS,

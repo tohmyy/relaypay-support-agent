@@ -58,10 +58,12 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 export interface HttpServerOptions {
   store: Store;
   authToken: string;
+  /** Refuse account lookups for a conversation not linked to a signed-in customer (production). */
+  requireIdentity?: boolean;
 }
 
 /** Stateless Streamable HTTP MCP endpoint at POST /mcp, guarded by a bearer token. */
-export function createHttpServer({ store, authToken }: HttpServerOptions): Server {
+export function createHttpServer({ store, authToken, requireIdentity }: HttpServerOptions): Server {
   return createServer(async (req, res) => {
     try {
       const path = (req.url ?? '').split('?')[0];
@@ -88,6 +90,7 @@ export function createHttpServer({ store, authToken }: HttpServerOptions): Serve
         conversationId: conversationIdFromHeader(req.headers['x-conversation-id']),
         // The model should not wait on the observability writes after each tool call.
         background: true,
+        requireIdentity,
       });
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,

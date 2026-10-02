@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const restSelect = vi.fn();
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/supabase.server', () => ({ restSelect: (...args: unknown[]) => restSelect(...args) }));
+// Every real call belongs to a signed-in customer: the state route only answers its owner (and staff).
+vi.mock('@/lib/auth/dal', () => ({
+  getCurrentUser: async () => ({ id: 'u-1', role: 'customer', customerId: 'CUS-1001' }),
+}));
 
 import { GET } from '@/app/api/conversations/[id]/state/route';
 
@@ -18,7 +22,7 @@ describe('GET /api/conversations/[id]/state', () => {
       if (table === 'conversation_turns') return [{ turn_number: 2, answer_type: 'escalation', user_transcript: 'secret text' }];
       if (table === 'support_tickets') return [{ ticket_id: 'TKT-000007', summary: 'internal summary' }];
       if (table === 'escalations') return [{ preferred_time: 'Friday', user_email: 'a@b.co', user_name: 'Ada' }];
-      return [{ ended_at: null }];
+      return [{ ended_at: null, customer_id: 'CUS-1001' }];
     });
     const res = await call('vapi_abc-123');
     expect(res.status).toBe(200);
@@ -41,7 +45,14 @@ describe('GET /api/conversations/[id]/state', () => {
   it('reports why and when a session ended, and the limits the UI counts down against', async () => {
     restSelect.mockImplementation(async (table: string) =>
       table === 'conversations'
-        ? [{ ended_at: '2026-10-01T12:00:25Z', end_reason: 'silence-timeout', started_at: '2026-10-01T12:00:00Z' }]
+        ? [
+            {
+              ended_at: '2026-10-01T12:00:25Z',
+              end_reason: 'silence-timeout',
+              started_at: '2026-10-01T12:00:00Z',
+              customer_id: 'CUS-1001',
+            },
+          ]
         : [],
     );
     const body = await (await call('vapi_abc-123')).json();
@@ -69,6 +80,16 @@ describe('GET /api/conversations/[id]/state', () => {
       endReason: null,
       startedAt: null,
     });
+  });
+
+  it('answers a call tied to nobody like an unknown id (there are no anonymous callers)', async () => {
+    restSelect.mockImplementation(async (table: string) =>
+      table === 'conversations'
+        ? [{ ended_at: null, customer_id: null, started_at: '2026-10-01T12:00:00Z' }]
+        : [{ turn_number: 1, answer_type: 'direct_answer' }],
+    );
+    const body = await (await call('vapi_abc-123')).json();
+    expect(body).toMatchObject({ answerType: null, ticketReference: null, ended: false, limits: null });
   });
 
   it('rejects malformed ids before touching the database', async () => {

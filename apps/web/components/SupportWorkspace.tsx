@@ -1,17 +1,18 @@
-import type { ContactValues } from '@/lib/contact';
 import type { PublicEndReason } from '@/lib/conversation-state';
 import { COPY } from '@/lib/copy';
 import type { SessionView } from '@/lib/session/derive';
 import type { SupportState } from '@/lib/support/derive';
 import type { ConversationTurn } from '@/lib/transcript';
 import type { VoiceModel } from '@/lib/voice/state';
+import AudioNotices from './AudioNotices';
 import CapabilityHints from './CapabilityHints';
-import ConversationComplete from './ConversationComplete';
+import ConversationComplete, { type CompleteLinkStatus } from './ConversationComplete';
 import ConversationPanel from './ConversationPanel';
 import ErrorState from './ErrorState';
 import EscalationPanel from './EscalationPanel';
 import { SessionWarning, SilenceCountdown } from './SessionNotices';
 import TicketConfirmation from './TicketConfirmation';
+import TypedComposer from './TypedComposer';
 import VoicePanel from './VoicePanel';
 
 export interface WorkspaceProps {
@@ -28,12 +29,29 @@ export interface WorkspaceProps {
   endReason?: PublicEndReason | null;
   /** Voice support is not configured, so a call cannot be started. */
   unavailable?: boolean;
+  /** The call's id and whether this page links it to the customer's account, for the saved-transcript link. */
+  conversationId?: string | null;
+  embedded?: boolean;
+  linkStatus?: CompleteLinkStatus;
   onStart(): void;
   onEnd(): void;
-  onSubmitContact(values: ContactValues): void;
+  /** Types a message into the live call. When absent the text box is not shown. */
+  onSendText?(text: string): Promise<boolean>;
+  /** Carry on by typing when voice cannot be used (shown on the microphone errors). */
+  onTypeInstead?(): void;
+  /** Extra content on the ended screen (resume, rating). */
+  endedExtra?: React.ReactNode;
+  /** The microphone is muted / the room is loud, when the browser could tell. */
+  muted?: boolean;
+  noisy?: boolean;
 }
 
-/** Purely presentational: every decision about what to show comes from the state it is given. */
+const LIVE_STATES = ['listening', 'user-speaking', 'processing', 'assistant-speaking'];
+
+/**
+ * Purely presentational: every decision about what to show comes from the state it is given. One column at every width:
+ * the voice and status panels on top, the conversation underneath, so each gets the full width and more height.
+ */
 export default function SupportWorkspace(p: WorkspaceProps) {
   const { state } = p.voice;
 
@@ -57,6 +75,11 @@ export default function SupportWorkspace(p: WorkspaceProps) {
             {COPY.notConfigured}
           </p>
         )}
+        {!p.unavailable && (
+          <p className="max-w-md text-sm text-ink-secondary" data-testid="mic-instruction">
+            <span className="font-medium text-ink">{COPY.microphone.heading}.</span> {COPY.microphone.instruction}
+          </p>
+        )}
         <CapabilityHints />
         <p className="max-w-md text-xs text-ink-muted">{COPY.privacyNotice}</p>
       </div>
@@ -66,52 +89,51 @@ export default function SupportWorkspace(p: WorkspaceProps) {
   if (state === 'error' && p.voice.error) {
     return (
       <div className="mx-auto w-full max-w-xl px-4 py-10 sm:py-16">
-        <ErrorState kind={p.voice.error} onRetry={p.onStart} />
+        <ErrorState kind={p.voice.error} onRetry={p.onStart} onTypeInstead={p.onTypeInstead} />
       </div>
     );
   }
 
   if (state === 'ended') {
     return (
-      <div className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-2">
+      <div data-layout="stack" className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
         <ConversationComplete
           ticketReference={p.ticketReference}
           escalated={p.escalated}
           endReason={p.endReason}
+          conversationId={p.conversationId}
+          embedded={p.embedded}
+          linkStatus={p.linkStatus}
           onStartAnother={p.onStart}
-        />
+        >
+          {p.endedExtra}
+        </ConversationComplete>
         {p.turns.length > 0 && <ConversationPanel turns={p.turns} />}
       </div>
     );
   }
 
-  const callOpen = state !== 'ending';
   return (
-    <div className="mx-auto grid w-full max-w-5xl items-start gap-6 px-4 py-6 sm:px-6 lg:grid-cols-2">
-      <div className="flex flex-col gap-6">
-        {p.session?.silenceCountdown != null ? (
-          <SilenceCountdown seconds={p.session.silenceCountdown} />
-        ) : (
-          p.session?.sessionWarning &&
-          p.session.secondsLeft != null && <SessionWarning secondsLeft={p.session.secondsLeft} />
-        )}
-        <section className="rounded-lg border border-line bg-surface p-6 shadow-card" aria-label="Voice">
-          <VoicePanel
-            state={state}
-            level={p.level}
-            hasConversation={p.turns.length > 0}
-            onStart={p.onStart}
-            onEnd={p.onEnd}
-          />
-        </section>
-        <EscalationPanel
-          support={p.support}
-          requestedTime={p.requestedTime}
-          canSubmit={callOpen}
-          onSubmit={p.onSubmitContact}
+    <div data-layout="stack" className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+      {p.session?.silenceCountdown != null ? (
+        <SilenceCountdown seconds={p.session.silenceCountdown} />
+      ) : (
+        p.session?.sessionWarning &&
+        p.session.secondsLeft != null && <SessionWarning secondsLeft={p.session.secondsLeft} />
+      )}
+      <AudioNotices muted={Boolean(p.muted)} noisy={Boolean(p.noisy)} />
+      <section className="rounded-lg border border-line bg-surface p-6 shadow-card" aria-label="Voice">
+        <VoicePanel
+          state={state}
+          level={p.level}
+          hasConversation={p.turns.length > 0}
+          onStart={p.onStart}
+          onEnd={p.onEnd}
         />
-        {p.support === 'ticket-created' && <TicketConfirmation reference={p.ticketReference} />}
-      </div>
+        {p.onSendText && LIVE_STATES.includes(state) && <TypedComposer onSend={p.onSendText} />}
+      </section>
+      <EscalationPanel support={p.support} requestedTime={p.requestedTime} />
+      {p.support === 'ticket-created' && <TicketConfirmation reference={p.ticketReference} />}
       <ConversationPanel turns={p.turns} />
     </div>
   );

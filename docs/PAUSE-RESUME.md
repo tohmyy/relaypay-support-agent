@@ -170,6 +170,20 @@ First run: 2026-10-02, desktop browser, current assistant. "Server" means what `
    reconnect call even though it had three turns, so treat a zero as "not measured".
 6. **The agent itself was slow** in these calls: see the first measurements in `docs/PERFORMANCE.md`.
 
+## What Build Plan V3 shipped from this (and what it did not)
+
+The full question (hold the silence timer while the customer is paused, mid-call) is **still open**. Build Plan V3 took two
+narrow pieces that do not need that decision:
+
+- **Mute status and a noise advisory (concern 28).** The page says when the microphone is muted
+  (`VoiceClient.onMuteChange`; the Vapi web SDK has `isMuted()` but no mute event, so the client reads it once a second and
+  reports a change) and, if a provider can give an ambient level, when the room looks noisy (`lib/voice/noise.ts`: loud for
+  4 s to show, quiet for 6 s to hide, so it never flickers). Both are `aria-live="polite"`, advisory only, never block the
+  call, and show nothing when there is no signal. **The Vapi web SDK gives no ambient level, so the noise advisory is built
+  and tested but has no live source (`[—]`).** There is no mute *button* and no silence hold: that needs this decision.
+- **A 30 second resume after the call ends (concern 16).** Not a mid-call pause: after the call has ended the customer can pick
+  the same conversation back up for 30 seconds, transcript kept. See `docs/VAPI.md`, "Resuming a conversation".
+
 ## Decision
 
 Not made. Once the table is filled in: choose A, B, C or D against the criteria above, decide the rule for paused time,

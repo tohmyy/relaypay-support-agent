@@ -116,19 +116,26 @@ describe.skipIf(!live)('Vapi endpoint end to end (live model)', () => {
   it('runs an escalation over the endpoint and closes the call through the webhook', async () => {
     const id = callIds[2];
     const conv = `vapi_${id}`;
+    // The web app links a call to the signed-in customer; here that is done directly with a seeded account.
+    const { data: accounts } = await db.from('app_users').select('id, email').eq('role', 'customer').eq('customer_id', 'CUS-1001').limit(1);
+    if (!accounts?.[0]) return;
+    await db
+      .from('conversations')
+      .upsert({ conversation_id: conv, channel: 'voice', customer_id: 'CUS-1001', user_id: accounts[0].id }, { onConflict: 'conversation_id' });
     const history: { role: string; content: string }[] = [];
     for (const said of [
       'My account was restricted and nobody is helping me.',
-      `My name is Vapi Tester and my email is ${EMAIL}.`,
-      'Tomorrow at 10am please.',
+      'Please arrange a callback.',
+      'Tomorrow at 10am please, I am in Lagos.',
     ]) {
       history.push({ role: 'user', content: said });
       const res = await vapiRequest(id, history);
       expect(res.status).toBe(200);
       history.push({ role: 'assistant', content: (await res.json()).choices[0].message.content });
     }
-    const { data: esc } = await db.from('escalations').select('*').eq('user_email', EMAIL);
+    const { data: esc } = await db.from('escalations').select('*').eq('conversation_id', conv);
     expect(esc).toHaveLength(1);
+    expect(esc![0].user_email).toBe(accounts[0].email);
 
     const hook = await fetch(`${url}/vapi/events`, {
       method: 'POST',

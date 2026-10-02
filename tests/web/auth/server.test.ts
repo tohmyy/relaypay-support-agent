@@ -209,12 +209,15 @@ describe('login action', () => {
   });
 
   it('blocks further attempts after five failures, before looking anyone up', async () => {
+    // Rate limits run only in production (apps/web/lib/auth/rate-limit.ts).
+    vi.stubEnv('NODE_ENV', 'production');
     h.restSelect.mockResolvedValue([dbUser()]);
     const attempt = () => login({ error: null }, form({ email: 'a@x.example', password: 'wrong password!' }));
     for (let i = 0; i < 5; i++) expect((await attempt()).error).toBe(SHELL_COPY.signIn.invalid);
     h.restSelect.mockClear();
     expect((await attempt()).error).toBe(SHELL_COPY.signIn.tooMany);
     expect(h.restSelect).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 
   it('reports a database failure as unavailable, without detail', async () => {

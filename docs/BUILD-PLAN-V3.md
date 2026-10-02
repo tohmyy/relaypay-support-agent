@@ -54,8 +54,8 @@ If this section disagrees with a runbook, fix the plan or the runbook in the sam
 |-------|----------|-------------------|
 | Agent liveness | `services/agent/src/server.ts` | `GET /health` → `{ ok: true }` only |
 | MCP liveness | `services/mcp/src/server.ts` | `GET /health` → `{ ok: true }` only |
-| Public root | `apps/web/app/page.tsx` | Anonymous voice landing; **no** login gate |
-| Proxy matcher | `apps/web/proxy.ts` | Protects customer/staff routes; **`/` not matched** |
+| Public root | `apps/web/app/page.tsx` | *(Corrected: the baseline note was stale.)* Already redirected: signed out → `/login`, customer → `/dashboard`, staff → `/staff`; there was no anonymous voice landing |
+| Proxy matcher | `apps/web/proxy.ts` | *(Corrected.)* Protects customer/staff routes and **does match `/`** |
 | Signed-in voice | `apps/web/app/(customer)/support/page.tsx` | `requireCustomer` + `linkIdentity` |
 | Voice session | `apps/web/hooks/useVoiceSession.ts` | Mic probe before start; state poll; end-reason follow-up |
 | Mic check | `apps/web/lib/voice/microphone.ts` | `getUserMedia` preflight; **no** idle instruction copy |
@@ -73,7 +73,7 @@ If this section disagrees with a runbook, fix the plan or the runbook in the sam
 | Escalation prompt | `services/agent/prompts/system.md` | Lookups exist; frustration/dispute can escalate early without full status summary |
 | Live transcript | client `turns` in `useVoiceSession` | Vapi partial/final; `start()` **clears** turns (blocks resume) |
 | Auth + link | `docs/AUTH.md`, `POST /api/support/link` | Session cookie; post-start best-effort link; swallows failures |
-| Agent identity | `services/agent/src/session/limits.ts` `lookupIdentity` | **Scaffolded, not wired** into turn path / prompt |
+| Agent identity | `services/agent/src/session/limits.ts` `lookupIdentity` | *(Corrected.)* Used by the controller for limits and handoff, but **not** given to the prompt or the tool server |
 | Prompt | `services/agent/src/prompt.ts` | No authenticated-customer block |
 | History UI | `/dashboard` (5 rows), `/support/[id]` | Linked conversations only; no dedicated history index |
 | Staff detail | `apps/web/app/(staff)/staff/conversations/[conversationId]/page.tsx` | Transcript/ticket/escalation; **no** feedback; **no** cost |
@@ -113,6 +113,30 @@ If this section disagrees with a runbook, fix the plan or the runbook in the sam
 16. No 30-second post-end resume that keeps the transcript.
 17. Callback/contact forms remain on voice escalation and HumanSupport text path.
 18. Auto-scroll exists but must be re-verified after stacked + bubble layout.
+
+### 1.4 Implementation status (this pass: Windows 1 to 5)
+
+Everything in §4 is implemented and covered by offline tests unless listed here. Deviations and what is **not** verified:
+
+- **Not run:** the live Vapi checklist (`docs/VAPI.md`, "Live checklist"), so hang-up, mute, resume and typed-message behaviour on a
+  real call, and the live-model decision tests (`*.live.test.ts`; they need the new prompt behaviour to be exercised with keys).
+- **Migrations written, not applied:** `20261006000015_escalation_preferred_at.sql` and `20261006000016_conversation_feedback.sql`.
+  Until `npm run db:migrate` runs, `create_escalation` for a callback and the feedback route fail against the real database, and
+  `tests/mcp/live.test.ts` ("creates a ticket, an escalation linked to it, and an event") fails on the missing `preferred_at` column.
+- **Resume depends on Vapi echoing `assistantOverrides.metadata`** (unverified, see `docs/VAPI.md`).
+- **Noise advisory has no live signal:** the Vapi web SDK reports mute but not an ambient level. The detector and notice are built
+  and tested; `[—]` in §8.
+- **Retry (30):** applied to readiness, start, link and the state poll. Agent-turn and tool-server retries are *not* added: the
+  model SDK owns the tool connections, a failed turn speaks the safe line, and a turn or an escalation is never re-run
+  automatically (it would be answered, or created, twice). The agent has the helper (`services/agent/src/retry.ts`) but no
+  caller yet. Retry telemetry is logged by the web server only.
+- **Start authorization (37):** `POST /api/support/start` authorizes and applies the customer's limits, but is not a signed token
+  the agent checks; enforcement of "no anonymous call" is the link plus the agent's grace-period hang-up (`AGENT_REQUIRE_LINK`).
+- **Callback time (42):** required unless the escalation is a `text_chat`; the readable text stays in `preferred_time`, the
+  canonical instant in `preferred_at` / `preferred_timezone`. The web state and staff page show the readable text, so they work
+  before the migration is applied.
+- Lint, typecheck, build and the offline test suite pass; two previously failing tests were fixed on the way (a login rate-limit
+  test that needed `NODE_ENV=production`, and the V2 live-escalation tests that now follow the no-form flow).
 
 ---
 
@@ -1097,6 +1121,28 @@ Targeted areas as windows land:
 | Tool customer mismatch | Linked A, tool B | Rejected |
 | Staff cost fixtures | Turns with `cost_usd` | Queue/detail/day total match sum |
 
+**Executed (offline, 2026-10-02).** Each row is covered by an automated test; the live-voice parts are in §7.3 and not run.
+
+| Scenario | Covered by |
+|---|---|
+| MCP down / Agent down | `tests/agent/retry-ready.test.ts` (ready check, 503), `tests/web/auth/support-api.test.ts` (`unavailable` body, retry once), `tests/web/preflight.test.tsx` (Start blocked) |
+| Unsigned start | `tests/web/auth/support-api.test.ts`, `tests/web/auth/routes.test.ts` (start/link/ready 401) |
+| Open `/` signed out | `tests/web/auth/home.test.tsx`, proxy tests in `tests/web/auth/server.test.ts` |
+| Mic denied / no mic device | `tests/web/microphone.test.ts`, `tests/web/preflight.test.tsx`, `tests/web/console.test.tsx` (Type instead) |
+| Link 500 then 200 / permanent 409 | `tests/web/human/components.test.tsx` (SupportPage link tests) |
+| Unlinked past grace | `tests/agent/link-grace.test.ts` |
+| State 503 once | `tests/web/preflight.test.tsx` (retry once, quiet notice) |
+| Closer phrase | `tests/agent/resolution.test.ts`, `tests/agent/text-turn.test.ts` |
+| Escalate without id | prompt rules in `tests/agent/identity.test.ts`; the model's behaviour is a live test, not run |
+| Past / >1 month callback | `tests/mcp/identity-callback.test.ts` |
+| Callback form UI | `tests/web/components.test.tsx`, `tests/web/human/*` |
+| Typed send during call | `tests/web/console.test.tsx` |
+| Feedback submit leaves status alone | `tests/web/auth/feedback-route.test.ts` |
+| Timeout end | `tests/web/console.test.tsx` (end-reason matrix), `tests/agent/session-controller.test.ts` |
+| Resume within / after 30 s | `tests/web/audio-resume.test.tsx`, `tests/agent/resume.test.ts`, `tests/web/auth/resume-route.test.ts` |
+| Tool customer mismatch | `tests/mcp/identity-callback.test.ts` |
+| Staff cost fixtures | `tests/web/staff-cost.test.ts`, `tests/web/staff-cost-ui.test.tsx`, `tests/web/auth/pages.test.tsx` |
+
 ### 7.3 Live voice (manual)
 
 Follow [VAPI.md](./VAPI.md): sign in as customer → `/support` only → ready gate → mic prompt → stacked layout + bubbles → type a message mid-call → link → diagnose then escalate without forms → closer hang-up → Resume within 30s (optional) → AI stars after grace → (optional handoff) staff close → human stars → staff sees ratings **and** estimated cost → history/transcript. Confirm speech-update present; readiness with MCP stopped; mute/noise checklist if V3.6 ships.
@@ -1105,149 +1151,151 @@ Follow [VAPI.md](./VAPI.md): sign in as customer → `/support` only → ready g
 
 ## 8. Definition of Done
 
+Status after the Windows 1 to 5 pass: see §1.4 for what is open or unverified (`[~]` is partial, an unticked live-Vapi row needs a person).
+
 Legend: `[x]` shipped in baseline · `[~]` partial · `[ ]` open · `[—]` deferred / won’t do in V3
 
 ### Window 1 — Access / ready / mic
 
 #### Availability (27)
 
-- [ ] Agent `GET /ready` checks MCP + DB with timeouts
-- [ ] Web `GET /api/support/ready` maps to customer-safe status
-- [ ] Pre-call gate blocks start when unavailable
-- [ ] Degraded UI: Try again / try later / human-support suggestion
-- [ ] In-call poll failure: status banner, no technical leakage
-- [ ] `vapi:setup` dry-run asserts `speech-update`
+- [x] Agent `GET /ready` checks MCP + DB with timeouts
+- [x] Web `GET /api/support/ready` maps to customer-safe status
+- [x] Pre-call gate blocks start when unavailable
+- [x] Degraded UI: Try again / try later / human-support suggestion
+- [x] In-call poll failure: status banner, no technical leakage
+- [x] `vapi:setup` dry-run asserts `speech-update`
 
 #### Retry (30)
 
-- [ ] Shared helper: max one automatic retry
-- [ ] Applied to readiness, start, link, eligible polls, eligible turn paths
-- [ ] Unsafe mutations not auto-retried without idempotency
-- [ ] Telemetry for retry exhaustion
-- [ ] Manual Try again resets budget for a new attempt
+- [x] Shared helper: max one automatic retry
+- [~] Applied to readiness, start, link, eligible polls, eligible turn paths
+- [x] Unsafe mutations not auto-retried without idempotency
+- [~] Telemetry for retry exhaustion
+- [x] Manual Try again resets budget for a new attempt
 
 #### Login-only + no anonymous (37, 39)
 
-- [ ] `/` redirects: login / dashboard / staff
-- [ ] Public anonymous `SupportPage` removed from `/`
-- [ ] Authenticated start authorization required before Vapi
-- [ ] Agent ends unlinked calls after grace
-- [ ] Start/link APIs 401 without customer session
-- [ ] AUTH.md / ABUSE.md updated (anonymous `/` closed)
+- [x] `/` redirects: login / dashboard / staff
+- [x] Public anonymous `SupportPage` removed from `/`
+- [x] Authenticated start authorization required before Vapi
+- [x] Agent ends unlinked calls after grace
+- [x] Start/link APIs 401 without customer session
+- [x] AUTH.md / ABUSE.md updated (anonymous `/` closed)
 
 #### Microphone (38)
 
-- [ ] Idle instruction explaining mic permission
-- [ ] No call start when permission denied
-- [ ] No call start when no mic detected
-- [ ] No automatic retry on mic failure
+- [x] Idle instruction explaining mic permission
+- [x] No call start when permission denied
+- [x] No call start when no mic detected
+- [x] No automatic retry on mic failure
 
 ### Window 2 — Identity / escalation
 
 #### Identity (29)
 
-- [ ] Link status observable; one automatic retry; manual save CTA
-- [ ] `lookupIdentity` wired into turn/prompt path
-- [ ] System prompt rules for authenticated customers
-- [ ] MCP enforces linked `customer_id`
-- [ ] AUTH.md / AGENT.md / MCP.md updated
-- [~] Abuse per-customer limits (confirm controller wiring)
+- [x] Link status observable; one automatic retry; manual save CTA
+- [x] `lookupIdentity` wired into turn/prompt path
+- [x] System prompt rules for authenticated customers
+- [x] MCP enforces linked `customer_id`
+- [x] AUTH.md / AGENT.md / MCP.md updated
+- [x] Abuse per-customer limits (confirm controller wiring)
 
 #### Escalation account, diagnosis, no forms (15, 18, 41, 42)
 
-- [ ] MCP overrides name/email from `app_users` when linked
-- [ ] ContactForm / callback forms removed from all customer production UI
-- [ ] HumanSupport has no callback form; scheduling via conversation
-- [ ] AI asks for specific callback date/time via voice or typed chat
-- [ ] Server rejects past times
-- [ ] Server rejects times more than one month ahead
-- [ ] Canonical `preferred_at` (and timezone) stored / displayed
-- [ ] Ask more → lookup → status summary before non-urgent escalate
-- [ ] HANDOFF.md / WORKFLOWS.md / MCP.md / AGENT.md updated
+- [x] MCP overrides name/email from `app_users` when linked
+- [x] ContactForm / callback forms removed from all customer production UI
+- [x] HumanSupport has no callback form; scheduling via conversation
+- [x] AI asks for specific callback date/time via voice or typed chat
+- [x] Server rejects past times
+- [x] Server rejects times more than one month ahead
+- [x] Canonical `preferred_at` (and timezone) stored / displayed
+- [~] Ask more → lookup → status summary before non-urgent escalate
+- [x] HANDOFF.md / WORKFLOWS.md / MCP.md / AGENT.md updated
 
 ### Window 3 — Resolution / UI / typing
 
 #### Resolution and ending (34, 35, 40)
 
-- [~] Deterministic closers + “anything else?” exist
-- [ ] Semantics documented: conversation vs ticket status
-- [ ] Prompt does not claim speech alone closes the case
-- [ ] Hang-up reliably follows controller completion
-- [ ] `low-confidence` / gibberish end path implemented
-- [ ] Ratings cannot change status (contract + tests in W4)
+- [x] Deterministic closers + “anything else?” exist
+- [x] Semantics documented: conversation vs ticket status
+- [x] Prompt does not claim speech alone closes the case
+- [x] Hang-up reliably follows controller completion
+- [x] `low-confidence` / gibberish end path implemented
+- [x] Ratings cannot change status (contract + tests in W4)
 
 #### Ended UX + transcript (31)
 
-- [~] Completion screen exists with some end reasons
-- [ ] Full end-reason copy matrix
-- [ ] View transcript CTA when linked + embedded
-- [ ] Pending/failed link behavior without broken links
+- [x] Completion screen exists with some end reasons
+- [x] Full end-reason copy matrix
+- [x] View transcript CTA when linked + embedded
+- [x] Pending/failed link behavior without broken links
 - [x] Same-session client transcript after end
 
 #### Console layout, bubbles, scroll (11, 14, 17)
 
-- [ ] Active/ended support UI is a vertical stack (no `lg:grid-cols-2`)
-- [ ] Live turns render as single bubbles
-- [ ] Auto-scroll stick-to-bottom verified after redesign
-- [ ] Auto-scroll pauses when user scrolls up
-- [ ] UI.md / UI-SPEC.md updated (stacked + bubbles)
+- [x] Active/ended support UI is a vertical stack (no `lg:grid-cols-2`)
+- [x] Live turns render as single bubbles
+- [x] Auto-scroll stick-to-bottom verified after redesign
+- [x] Auto-scroll pauses when user scrolls up
+- [x] UI.md / UI-SPEC.md updated (stacked + bubbles)
 
 #### Typed converse (13)
 
-- [ ] Text composer on AI support injects into the same conversation
-- [ ] Mic-denied offers Type instead (text-primary path)
-- [ ] Typed path can collect callback datetime without a form
+- [x] Text composer on AI support injects into the same conversation
+- [x] Mic-denied offers Type instead (text-primary path)
+- [x] Typed path can collect callback datetime without a form
 
 ### Window 4 — Feedback / history / staff / cost
 
 #### Feedback (33, 35, 36)
 
-- [ ] `conversation_feedback` migration with stages `ai` \| `human`
-- [ ] AI-stage rating UI after voice end (after resume grace if shown)
-- [ ] Human-stage rating UI after staff close
-- [ ] Idempotent authenticated feedback POST
-- [ ] Feedback never mutates `final_status` / ticket status
-- [ ] Staff detail shows both stages when present
+- [x] `conversation_feedback` migration with stages `ai` \| `human`
+- [x] AI-stage rating UI after voice end (after resume grace if shown)
+- [x] Human-stage rating UI after staff close
+- [x] Idempotent authenticated feedback POST
+- [x] Feedback never mutates `final_status` / ticket status
+- [x] Staff detail shows both stages when present
 
 #### History (32)
 
-- [~] Dashboard shows up to 5 conversations
+- [x] Dashboard shows up to 5 conversations
 - [x] `/support/[id]` detail with access control
-- [ ] Paginated `/support/history` (or equivalent) + nav + View all
-- [ ] Link-failure recovery so calls are not silently missing
-- [ ] Transcript merge tests for legacy + Mode B rows
+- [x] Paginated `/support/history` (or equivalent) + nav + View all
+- [x] Link-failure recovery so calls are not silently missing
+- [x] Transcript merge tests for legacy + Mode B rows
 
 #### Staff cost (12)
 
-- [ ] Per-call estimated model cost on staff queue
-- [ ] Per-call estimate on staff detail
-- [ ] Today’s UTC day total estimate on staff home/queue
-- [ ] Values labeled as estimates (not bills)
+- [x] Per-call estimated model cost on staff queue
+- [x] Per-call estimate on staff detail
+- [x] Today’s UTC day total estimate on staff home/queue
+- [x] Values labeled as estimates (not bills)
 
 ### Window 5 — Audio / resume / release
 
 #### Mute / noise (28)
 
-- [ ] Mute status wiring + accessible copy **or** documented deferral
-- [ ] Noise advisory with hysteresis **or** `[—]` if signals insufficient
+- [x] Mute status wiring + accessible copy **or** documented deferral
+- [—] Noise advisory with hysteresis **or** `[—]` if signals insufficient
 - [—] Full mute control + silence hold (unless PAUSE-RESUME unlocks)
 - [—] Full mid-call pause/resume (30s post-end grace is in scope below)
 
 #### Post-end resume (16)
 
-- [ ] Resume CTA for 30s after end with transcript retained
-- [ ] Resume reuses conversation id and does not clear turns
-- [ ] Server reopen only within 30s grace for owner
-- [ ] After grace, Resume hidden; Start another is new conversation
-- [ ] PAUSE-RESUME.md / VAPI.md document the grace
+- [x] Resume CTA for 30s after end with transcript retained
+- [x] Resume reuses conversation id and does not clear turns
+- [x] Server reopen only within 30s grace for owner
+- [x] After grace, Resume hidden; Start another is new conversation
+- [x] PAUSE-RESUME.md / VAPI.md document the grace
 
 #### Quality bar
 
-- [ ] `npm test`, `typecheck`, `lint`, `build` green
-- [ ] Failure-injection table (§7.2) executed and noted
+- [x] `npm test`, `typecheck`, `lint`, `build` green
+- [x] Failure-injection table (§7.2) executed and noted
 - [ ] Live Vapi checklist completed for W1–W5 paths
-- [ ] No new forbidden customer terms
-- [ ] §1 baseline gaps equal all non-`[x]` in-scope rows above
+- [x] No new forbidden customer terms
+- [~] §1 baseline gaps equal all non-`[x]` in-scope rows above (§1.4 lists the remainder)
 
 ---
 

@@ -3,6 +3,7 @@ import { act, cleanup, configure, render, renderHook, screen, waitFor } from '@t
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
+import { COPY } from '@/lib/copy';
 import { deriveSupportState } from '@/lib/support/derive';
 import { NEUTRAL_STATE, type PublicConversationState } from '@/lib/conversation-state';
 import { MockVoiceClient } from '@/lib/voice/mock-client';
@@ -90,12 +91,15 @@ describe('HumanSupport', () => {
     expect(f.calls.some((c) => c.url.includes('after=2026-10-03T12%3A00%3A00.000Z'))).toBe(true);
   });
 
-  it('says the team will reply when nobody is online, and offers a callback straight away', async () => {
+  it('says the team will reply when nobody is online, and tells the customer to ask for a callback in the message box', async () => {
     fakeFetch({ [`GET ${BASE}/messages`]: { json: thread({ waitingSince: new Date().toISOString(), staffOnline: false }) } });
     render(<HumanSupport conversationId="vapi_abc" />);
     expect(await screen.findByText(/Our team will reply as soon as someone is free/)).toBeTruthy();
     expect(screen.getByText(/Waiting for under a minute/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Request a callback instead' })).toBeTruthy();
+    expect(screen.getByText(/tell us a day and time in the message box/)).toBeTruthy();
+    // No callback form or button (AC-18.1): scheduling happens in the chat.
+    expect(screen.queryByRole('button', { name: /callback/i })).toBeNull();
+    expect(screen.queryByLabelText(/good time to call/)).toBeNull();
     expect(screen.queryByText(/Still waiting\?/)).toBeNull();
   });
 
@@ -155,6 +159,19 @@ describe('HumanSupport', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('2,000 characters');
     expect(screen.getByRole('button', { name: 'Send' })).toHaveProperty('disabled', true);
     expect(f.calls.some((c) => c.method === 'POST' && c.url.endsWith('/messages'))).toBe(false);
+  });
+
+  it('offers the specialist-stage rating only once the chat is closed (AC-33.2)', async () => {
+    fakeFetch({ [`GET ${BASE}/messages`]: { json: thread({ supportMode: 'ended', ended: true }) } });
+    const view = render(<HumanSupport conversationId="vapi_abc" />);
+    expect(await screen.findByText('This conversation is closed')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'How was the help from our support specialist?' })).toBeTruthy();
+    view.unmount();
+
+    fakeFetch({ [`GET ${BASE}/messages`]: { json: thread({ waitingSince: new Date().toISOString() }) } });
+    render(<HumanSupport conversationId="vapi_abc" />);
+    expect(await screen.findByLabelText('Your message')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'How was the help from our support specialist?' })).toBeNull();
   });
 
   it('shows the closed state instead of the message box, and stops polling', async () => {
@@ -270,9 +287,11 @@ describe('SupportPage with a specialist', () => {
     session: {},
     endReason: null,
     conversationId: 'vapi_abc',
+    blocked: null,
+    statusUnavailable: false,
+    signedOut: false,
     start: async () => {},
     end: vi.fn(async () => {}),
-    submitContact: () => {},
     ...over,
   });
 
@@ -308,14 +327,48 @@ describe('SupportPage with a specialist', () => {
     await waitFor(() => expect(end).toHaveBeenCalled());
   });
 
+  it('retries a failed link once, automatically, and then it is linked (AC-30.*)', async () => {
+    h.session = baseSession();
+    const f = fakeFetch({ 'POST /api/support/link': [{ status: 503, json: { error: 'unavailable' } }, { json: { linked: true } }] });
+    render(<SupportPage config={vapi} embedded linkIdentity />);
+    await waitFor(() => expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('gives up after the one retry, offers to save the conversation, and a manual try starts a fresh budget', async () => {
+    h.session = baseSession();
+    const f = fakeFetch({
+      'POST /api/support/link': [
+        { status: 503, json: { error: 'unavailable' } },
+        { status: 503, json: { error: 'unavailable' } },
+        { json: { linked: true } },
+      ],
+    });
+    render(<SupportPage config={vapi} embedded linkIdentity />);
+    const save = await screen.findByRole('button', { name: COPY.link.saveAction });
+    expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(2);
+    await userEvent.click(save);
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(3);
+  });
+
+  it('does not retry a refusal (another owner): one attempt, then the failed state', async () => {
+    h.session = baseSession();
+    const f = fakeFetch({ 'POST /api/support/link': { status: 409, json: { error: 'conflict' } } });
+    render(<SupportPage config={vapi} embedded linkIdentity />);
+    expect((await screen.findByRole('alert')).textContent).toContain(COPY.link.failed);
+    expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(1);
+  });
+
   it('does not end the call for an unrelated link failure', async () => {
     const end = vi.fn(async () => {});
     h.session = baseSession({ end });
     fakeFetch({ 'POST /api/support/link': { status: 409, json: { error: 'conflict' } } });
     render(<SupportPage config={vapi} embedded linkIdentity />);
-    await new Promise((r) => setTimeout(r, 30));
+    // Not a limit: the call carries on, and the customer is offered a way to save it to their account.
+    expect((await screen.findByRole('alert')).textContent).toContain(COPY.link.saveAction);
     expect(end).not.toHaveBeenCalled();
-    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
 
@@ -323,9 +376,9 @@ describe('the voice session when the conversation moves to a specialist', () => 
   const human: PublicConversationState = { ...NEUTRAL_STATE, supportMode: 'human' };
 
   it('derives a human-support state ahead of "completed"', () => {
-    expect(deriveSupportState(human, { callEnded: false, contactSubmitted: false })).toBe('human-support');
-    expect(deriveSupportState(human, { callEnded: true, contactSubmitted: false })).toBe('human-support');
-    expect(deriveSupportState({ ...human, supportMode: 'ended' }, { callEnded: true, contactSubmitted: false })).toBe('completed');
+    expect(deriveSupportState(human, { callEnded: false })).toBe('human-support');
+    expect(deriveSupportState(human, { callEnded: true })).toBe('human-support');
+    expect(deriveSupportState({ ...human, supportMode: 'ended' }, { callEnded: true })).toBe('completed');
   });
 
   it('stops the browser call when polling shows the hand-over', async () => {

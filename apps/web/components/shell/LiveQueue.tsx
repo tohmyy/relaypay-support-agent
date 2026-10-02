@@ -2,7 +2,7 @@
 
 import { formatWait } from '@/lib/human/notify';
 import type { Role } from '@/lib/auth/token';
-import { workingQueue } from '@/lib/dashboard/staff';
+import { formatUsd, workingQueue } from '@/lib/dashboard/staff';
 import { STAFF_COPY } from '@/lib/shell-copy';
 import QueueTable from './QueueTable';
 import { useStaffInbox } from './StaffInbox';
@@ -62,6 +62,13 @@ export default function LiveQueue({ variant, role }: { variant: 'queue' | 'all';
             <Stat label={copy.inProgress} value={data.counts.inProgress} />
             <Stat label={copy.escalated} value={data.counts.escalated} />
             <Stat label={copy.resolvedToday} value={data.counts.resolvedToday} />
+          </div>
+          <div className="mb-6">
+            <Stat
+              label={copy.todayCost}
+              value={data.todayCostUsd === null || data.todayCostUsd === undefined ? copy.costUnknown : formatUsd(data.todayCostUsd)}
+              note={copy.todayCostNote}
+            />
           </div>
           <AlertToggles />
         </>

@@ -1,5 +1,6 @@
 import { buildWarmOptions, runTurn } from './agent';
 import { loadEnv } from './env';
+import { createReadyCheck } from './ready';
 import { createAgentServer } from './server';
 import { sessionConfigFromEnv } from './session/config';
 import { SessionController } from './session/controller';
@@ -43,6 +44,7 @@ const server = createAgentServer({
   session,
   warm,
   fillerAfterMs: env.ACK_AFTER_MS,
+  ready: createReadyCheck({ db, mcpUrl: env.MCP_SERVER_URL }),
 });
 
 server.listen(env.AGENT_PORT, env.AGENT_HOST, () => {

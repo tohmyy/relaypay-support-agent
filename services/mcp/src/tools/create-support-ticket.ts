@@ -30,7 +30,13 @@ export const createSupportTicket: ToolDef<z.infer<typeof createSupportTicketSche
   },
   schema: createSupportTicketSchema,
   conversationId: (i) => i.conversation_id,
-  async run(input, store) {
+  accountScoped: true,
+  async run(rawInput, store, ctx) {
+    // A linked conversation's tickets belong to the signed-in customer; a different customer_id is refused.
+    if (ctx.identity && rawInput.customer_id && rawInput.customer_id !== ctx.identity.customerId) {
+      throw new ToolError('not_authorized', 'That customer_id is not the customer in this conversation.');
+    }
+    const input = ctx.identity ? { ...rawInput, customer_id: ctx.identity.customerId } : rawInput;
     if (input.customer_id && !(await store.customerExists(input.customer_id))) {
       throw new ToolError('reference_not_found', 'That customer_id does not exist.');
     }

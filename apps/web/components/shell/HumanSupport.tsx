@@ -8,6 +8,7 @@ import { formatWait, waitedLongEnough } from '@/lib/human/notify';
 import type { MessageAuthor } from '@/lib/human/messages';
 import { SHELL_COPY } from '@/lib/shell-copy';
 import ChatLog from './ChatLog';
+import SessionFeedback from '../SessionFeedback';
 import Composer from './Composer';
 
 interface CustomerThreadMeta extends ThreadMeta {
@@ -52,8 +53,9 @@ function useNow(everyMs: number): number {
 
 /**
  * The customer's text chat with a support specialist, after the voice call has handed over. A structured transcript
- * (not chat bubbles), the specialist's name and title, what is happening while they wait (and a way to ask for a callback
- * instead), a typing line, and a message box. It never takes focus by itself and it carries no landmark of its own, so
+ * (not chat bubbles), the specialist's name and title, what is happening while they wait, a typing line, and a message
+ * box. There is no callback form: a customer who would rather be called says so in the message box and the specialist
+ * arranges it with them in the conversation. It never takes focus by itself and it carries no landmark of its own, so
  * it can sit in a page, a panel or (later) a widget.
  */
 export default function HumanSupport({ conversationId }: { conversationId: string }) {
@@ -67,13 +69,12 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
   });
   const copy = SHELL_COPY.human;
   const meta = chat.meta;
-  const [closedByYou, setClosedByYou] = useState<'ended' | 'callback' | null>(null);
-  const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended' || closedByYou !== null;
+  const [closedByYou, setClosedByYou] = useState(false);
+  const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended' || closedByYou;
   const staff = meta?.staff ?? null;
   const now = useNow(15_000);
 
-  const [panel, setPanel] = useState<'none' | 'callback' | 'end'>('none');
-  const [callbackTime, setCallbackTime] = useState('');
+  const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -90,21 +91,21 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
   const longWait = waiting && waitedLongEnough(meta?.waitingSince, now);
   const callbackOk = meta?.callbackAvailable !== false;
 
-  async function act(path: 'end' | 'callback') {
+  async function endChat() {
     setWorking(true);
     setActionError(null);
     try {
-      const res = await fetch(`${base}/${path}`, {
+      const res = await fetch(`${base}/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(path === 'callback' ? { preferredTime: callbackTime } : {}),
+        body: JSON.stringify({}),
       });
       if (!res.ok && res.status !== 409) throw new Error(String(res.status));
-      setClosedByYou(path === 'end' ? 'ended' : 'callback');
-      setPanel('none');
+      setClosedByYou(true);
+      setConfirmingEnd(false);
       void chat.refresh();
     } catch {
-      setActionError(path === 'end' ? copy.endFailed : copy.callbackFailed);
+      setActionError(copy.endFailed);
     } finally {
       setWorking(false);
     }
@@ -159,10 +160,12 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
       {closed ? (
         <div className="mt-4 rounded-md bg-surface-subtle p-4">
           <p className="text-base font-semibold text-ink">{copy.closedTitle}</p>
-          <p className="mt-1 text-sm text-ink-secondary">{closedByYou === 'callback' ? copy.callbackSent : copy.closedBody}</p>
+          <p className="mt-1 text-sm text-ink-secondary">{copy.closedBody}</p>
           <Link href="/dashboard" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
             {copy.closedAction}
           </Link>
+          {/* Rating the specialist's help: once the chat is closed (by staff, or by the customer ending it). */}
+          {meta?.supportMode === 'ended' && <SessionFeedback conversationId={conversationId} stage="human" />}
         </div>
       ) : (
         <>
@@ -179,21 +182,10 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
           />
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {waiting && callbackOk && panel !== 'callback' && (
+            {!confirmingEnd && (
               <button
                 type="button"
-                onClick={() => setPanel('callback')}
-                className={`inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium ${
-                  longWait ? 'bg-primary text-white hover:bg-primary-hover' : 'border border-line bg-surface text-ink hover:bg-surface-subtle'
-                }`}
-              >
-                {copy.callbackInstead}
-              </button>
-            )}
-            {panel !== 'end' && (
-              <button
-                type="button"
-                onClick={() => setPanel('end')}
+                onClick={() => setConfirmingEnd(true)}
                 className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:bg-surface-subtle"
               >
                 {copy.endChat}
@@ -201,51 +193,19 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
             )}
           </div>
 
-          {callbackOk && panel === 'callback' && (
-            <div className="mt-3 rounded-md bg-surface-subtle p-4">
-              <p className="text-sm font-semibold text-ink">{copy.callbackTitle}</p>
-              <label htmlFor="callback-time" className="mt-2 block text-sm text-ink-secondary">
-                {copy.callbackTime}
-              </label>
-              <input
-                id="callback-time"
-                value={callbackTime}
-                maxLength={100}
-                onChange={(e) => setCallbackTime(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-ink"
-              />
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  disabled={working}
-                  onClick={() => void act('callback')}
-                  className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
-                >
-                  {working ? copy.callbackSending : copy.callbackSend}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPanel('none')}
-                  className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
-                >
-                  {copy.callbackCancel}
-                </button>
-              </div>
-            </div>
-          )}
-          {panel === 'end' && (
+          {confirmingEnd && (
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
                 disabled={working}
-                onClick={() => void act('end')}
+                onClick={() => void endChat()}
                 className="inline-flex min-h-11 items-center rounded-md bg-danger px-4 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {copy.endConfirm}
               </button>
               <button
                 type="button"
-                onClick={() => setPanel('none')}
+                onClick={() => setConfirmingEnd(false)}
                 className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
               >
                 {copy.endKeep}

@@ -13,7 +13,8 @@ const NAV: NavItem[] = [
   { href: '/payments', label: SHELL_COPY.nav.payments, icon: 'payments' },
   { href: '/payouts', label: SHELL_COPY.nav.payouts, icon: 'payouts' },
   { href: '/invoices', label: SHELL_COPY.nav.invoices, icon: 'invoices' },
-  { href: '/support', label: SHELL_COPY.nav.support, icon: 'support', prefix: true },
+  { href: '/support', label: SHELL_COPY.nav.support, icon: 'support', prefix: true, exclude: ['/support/history'] },
+  { href: '/support/history', label: SHELL_COPY.nav.history, icon: 'history' },
   { href: '/settings', label: SHELL_COPY.nav.settings, icon: 'settings' },
 ];
 

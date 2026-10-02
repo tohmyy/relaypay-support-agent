@@ -17,11 +17,11 @@ The agent connects with `MCP_SERVER_URL` (for local development `http://localhos
 
 | Tool | Input | Result |
 |---|---|---|
-| `lookup_customer` | one or more of `customer_id`, `email`, `company_name` | `found`, `customer_id`, `company_name`, `plan`, `account_status`, `kyc_status`, `support_notes` |
+| `lookup_customer` | one or more of `customer_id`, `email`, `company_name` (a linked conversation always gets its own account) | `found`, `customer_id`, `company_name`, `plan`, `account_status`, `kyc_status`, `support_notes` |
 | `lookup_transaction` | `transaction_id` | `found`, `transaction_id`, `customer_id`, `type`, `status`, `amount` (number), `currency`, `estimated_arrival` (or null), `support_summary` |
 | `lookup_payout` | `payout_id` or `transaction_id` | `found`, `payout_id`, `transaction_id`, `customer_id`, `status`, `scheduled_for`, `failure_reason`, `support_summary` (from the linked transaction) |
 | `create_support_ticket` | `category`, `priority`, `summary`, `conversation_id`, optional `customer_id` | `ticket_id` (`TKT-000001`), `status: "open"` |
-| `create_escalation` | `user_name`, `user_email`, `category`, `reason`, optional `ticket_id`, `customer_id`, `preferred_time` | `escalation_id` (`ESC-000001`), `status: "open"`, `follow_up_summary` |
+| `create_escalation` | `category`, `reason`, optional `ticket_id`, `contact_preference` (`text_chat` / `callback`), `preferred_at` (ISO 8601), `preferred_timezone` (IANA), `preferred_time` (display text); `user_name`, `user_email`, `customer_id` only when the conversation is not linked | `escalation_id` (`ESC-000001`), `status: "open"`, `callback_at` (callback only), `follow_up_summary` |
 | `log_conversation_event` | `conversation_id`, `event_type`, `summary`, optional `metadata` | `logged: true` |
 
 Enums: ticket category `payment|payout|invoice|account|compliance|technical|other`, priority
@@ -43,11 +43,28 @@ Enums: ticket category `payment|payout|invoice|account|compliance|technical|othe
   `conversation_events` table (added in migration `..._conversation_events.sql`).
 - Writes that carry a `conversation_id` create a minimal `conversations` row first if it does not exist yet.
 
+## Identity and callback times (Build Plan V3)
+
+- **Who is asking.** The agent sends `X-Conversation-Id`; for the account tools (`lookup_customer`, `lookup_transaction`,
+  `lookup_payout`, `create_support_ticket`, `create_escalation`) the server reads `conversations.customer_id` / `user_id`
+  (written by the web app's link, never taken from the model) and scopes the tool to that customer. Another customer's
+  transaction or payout is `found: false`; `lookup_customer` returns the signed-in account whatever was asked; a different
+  `customer_id` on a ticket or escalation is refused (`not_authorized`). A failed read of the link fails closed.
+- **`MCP_REQUIRE_IDENTITY`**: when on (the default in production) account tools refuse a conversation that is not linked to a
+  signed-in customer (`not_authorized`). Off by default elsewhere so scripts and tests can call the tools directly.
+- **Contact details.** A linked escalation stores the account's display name and email (`app_users`) whatever the model
+  supplied; typed name/email are only needed when no account is linked.
+- **Callback time.** Anything that is not a `text_chat` escalation needs a specific `preferred_at`. Without an offset it is wall
+  clock in `preferred_timezone` (a timezone is then required). Accepted only if `now - 2 min <= preferred_at <= now + 1
+  calendar month` (month measured on the customer's wall clock, so 31 Jan becomes 28 Feb). The error text is safe to give
+  back to the model so it can ask the customer again. Stored as `escalations.preferred_at` / `preferred_timezone`
+  (migration `..._escalation_preferred_at.sql`) with a readable `preferred_time`.
+
 ## Caveats for the agent (Phase 6)
 
 - `lookup_customer` returns internal `support_notes` as the spec requires. The agent must never read them aloud.
-- There is no caller verification beyond what the customer says (the PRD allows this). Treat lookup results as
-  support context, not proof of identity.
+- Callers are signed-in customers: lookups are scoped to the customer the conversation is linked to (see above). Treat lookup
+  results as support context.
 - `create_escalation` cannot set `call_booked`; it stays false until a booking flow exists.
 - The requirements doc shows `amount` as a string; the TDD says number. The tool returns a number.
 

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { validateContact } from '@/lib/contact';
 import {
   CONVERSATION_ID_PATTERN,
   NEUTRAL_STATE,
@@ -75,7 +74,7 @@ describe('voice state machine', () => {
 });
 
 describe('support state derivation', () => {
-  const flags = { callEnded: false, contactSubmitted: false };
+  const flags = { callEnded: false };
   const backend = (over: Partial<typeof emptyBackendState> = {}) => ({ ...emptyBackendState, ...over });
 
   it.each([
@@ -84,8 +83,7 @@ describe('support state derivation', () => {
     [backend({ answerType: 'clarification' }), flags, 'clarifying'],
     [backend({ ticketReference: 'TKT-000001', answerType: 'clarification' }), flags, 'ticket-created'],
     [backend({ answerType: 'escalation' }), flags, 'escalation-required'],
-    [backend({ answerType: 'escalation' }), { ...flags, contactSubmitted: true }, 'escalating'],
-    [backend({ answerType: 'escalation', escalation: { requestedTime: null } }), { ...flags, contactSubmitted: true }, 'escalated'],
+    [backend({ answerType: 'escalation', escalation: { requestedTime: null } }), flags, 'escalated'],
     [backend({ escalation: { requestedTime: 'Tuesday' } }), flags, 'escalated'],
     [backend({ escalation: { requestedTime: null } }), { ...flags, callEnded: true }, 'completed'],
     [backend(), { ...flags, callEnded: true }, 'completed'],
@@ -223,20 +221,6 @@ describe('public conversation state', () => {
     for (const bad of ['', 'x'.repeat(65), 'a b', 'a/b', "x'; drop", '../etc']) {
       expect(CONVERSATION_ID_PATTERN.test(bad)).toBe(false);
     }
-  });
-});
-
-describe('contact validation', () => {
-  it('requires a name and a valid email; time is optional', () => {
-    expect(validateContact({ name: '', email: '', preferredTime: '' })).toEqual({
-      name: COPY.escalation.nameRequired,
-      email: COPY.escalation.emailRequired,
-    });
-    expect(validateContact({ name: 'Ada', email: 'not-an-email', preferredTime: '' }).email).toBe(
-      COPY.escalation.emailInvalid,
-    );
-    expect(validateContact({ name: 'Ada', email: 'ada@example.com', preferredTime: '' })).toEqual({});
-    expect(validateContact({ name: '  ', email: ' ada@example.com ', preferredTime: 'Tue' }).name).toBeTruthy();
   });
 });
 

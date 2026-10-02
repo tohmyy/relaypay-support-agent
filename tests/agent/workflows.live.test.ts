@@ -34,6 +34,7 @@ describe.skipIf(!live)('support workflows A-H (live model)', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const since = new Date(runId).toISOString();
     for (const c of convs) {
+      await db.from('escalations').delete().eq('conversation_id', c);
       const { data: tickets } = await db.from('support_tickets').select('ticket_id').eq('conversation_id', c);
       const ids = (tickets ?? []).map((t) => t.ticket_id);
       if (ids.length) await db.from('escalations').delete().in('ticket_id', ids);
@@ -46,6 +47,24 @@ describe.skipIf(!live)('support workflows A-H (live model)', () => {
     await db.from('tool_calls').delete().is('conversation_id', null).gte('created_at', since);
     await db.from('retrieval_logs').delete().is('conversation_id', null).gte('created_at', since);
   });
+
+
+  // Escalations take the customer's name and email from the signed-in account, so these conversations are linked to a
+  // seeded customer account first (the web app's link does this in production). Skips the test if none is seeded.
+  async function account() {
+    const { data } = await db
+      .from('app_users')
+      .select('id, display_name, email')
+      .eq('role', 'customer')
+      .eq('customer_id', 'CUS-1001')
+      .limit(1);
+    return data?.[0] as { id: string; display_name: string; email: string } | undefined;
+  }
+  async function linkTo(conversationId: string, acct: { id: string }) {
+    await db
+      .from('conversations')
+      .upsert({ conversation_id: conversationId, channel: 'voice', customer_id: 'CUS-1001', user_id: acct.id }, { onConflict: 'conversation_id' });
+  }
 
   const conv = (name: string) => {
     const id = `test-workflow-${name}-${runId}`;
@@ -118,7 +137,7 @@ describe.skipIf(!live)('support workflows A-H (live model)', () => {
     expect(rec.calls.some((x) => x.tool_name === 'lookup_transaction' && x.status === 'success')).toBe(true);
   }, 90_000);
 
-  it('E: payout lookup (Scenario 5) escalates a review without explaining why', async () => {
+  it('E: payout lookup (Scenario 5) looks it up and summarizes before escalating a review, without explaining why', async () => {
     const c = conv('e');
     const r = await say(c, 'What is happening with payout PAY-7002?');
     expect(r.toolsUsed).toContain('lookup_payout');
@@ -141,16 +160,22 @@ describe.skipIf(!live)('support workflows A-H (live model)', () => {
     expect(r2.response).toContain(rec.tickets[0].ticket_id);
   }, 150_000);
 
-  it('G: human escalation (Scenario 7) records name, email and time, then stops troubleshooting', async () => {
+  it('G: human escalation (Scenario 7) uses the account details, asks for a specific time, then stops troubleshooting', async () => {
+    const acct = await account();
+    if (!acct) return;
     const c = conv('g');
+    await linkTo(c, acct);
     const r1 = await say(c, 'My account was restricted and nobody is helping me.');
     expect(r1.answerType).toBe('escalation');
     expect(r1.response).not.toMatch(/because|due to|kyc|compliance/i);
-    await say(c, `My name is Workflow Tester and my email is ${EMAIL}.`);
-    const r3 = await say(c, 'Tomorrow at 10am works for a call.');
-    const { data } = await db.from('escalations').select('*').eq('user_email', EMAIL);
+    expect(r1.response).not.toMatch(/\b(your|full) (name|email)|email address/i);
+    const r2 = await say(c, 'A callback please, but any time is fine.');
+    expect(r2.toolsUsed).not.toContain('create_escalation'); // "any time" is not a specific time
+    const r3 = await say(c, 'Tomorrow at 10am works for a call, I am in Lagos.');
+    const { data } = await db.from('escalations').select('*').eq('conversation_id', c);
     expect(data?.length ?? 0).toBe(1);
-    expect(data![0]).toMatchObject({ user_name: 'Workflow Tester', status: 'open' });
+    expect(data![0]).toMatchObject({ user_name: acct.display_name, user_email: acct.email, status: 'open', contact_preference: 'callback' });
+    expect(data![0].preferred_at).toBeTruthy();
     expect(String(data![0].preferred_time ?? '')).toMatch(/10/);
     expect(r3.escalated).toBe(true);
     const r4 = await say(c, 'So what is going on with my account?');

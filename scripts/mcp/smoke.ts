@@ -51,6 +51,7 @@ try {
     user_email: 'smoke@example.com',
     category: 'compliance',
     reason: 'Restricted account (smoke test)',
+    preferred_at: new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString(),
   }); // scenario 7
   await call('log_conversation_event', {
     conversation_id: conversationId,

@@ -5,6 +5,9 @@ import { sanitizeMetadata } from '../../services/mcp/src/tools/log-conversation-
 import { isAuthorized } from '../../services/mcp/src/utils/auth';
 import { createFakeStore, type FakeStore } from './fake-store';
 
+/** A specific callback time a few days ahead: inside the one-month window. */
+const soon = () => new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+
 const tool = (name: string) => tools.find((t) => t.name === name)!;
 
 let store: FakeStore;
@@ -139,6 +142,7 @@ describe('write tools', () => {
       user_email: 'amara@lagosledger.example',
       category: 'compliance',
       reason: 'Payout under review',
+      preferred_at: soon(),
     });
     expect(r).toMatchObject({ escalation_id: 'ESC-000001', status: 'open' });
     expect(JSON.stringify(r)).not.toContain('lagosledger');
@@ -147,7 +151,7 @@ describe('write tools', () => {
   it('stores the request conversation id on the escalation and creates the conversation first', async () => {
     const r = await executeTool(
       tool('create_escalation'),
-      { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r' },
+      { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r', preferred_at: soon() },
       store,
       { conversationId: 'conv_ctx-1' },
     );
@@ -166,7 +170,7 @@ describe('write tools', () => {
     });
     expect(store.escalations[0]).toMatchObject({ contact_preference: 'text_chat' });
     expect(JSON.stringify(chat)).toContain('text chat');
-    expect(JSON.stringify(chat)).not.toContain('contact details you provided');
+    expect(JSON.stringify(chat)).not.toContain('call you on');
 
     const callback = await run('create_escalation', {
       user_name: 'A',
@@ -174,8 +178,9 @@ describe('write tools', () => {
       category: 'payment',
       reason: 'r',
       contact_preference: 'callback',
+      preferred_at: soon(),
     });
-    expect(JSON.stringify(callback)).toContain('contact details you provided');
+    expect(JSON.stringify(callback)).toContain('contact details on your account');
   });
 
   it('refuses an unknown contact preference and treats it as optional', async () => {
@@ -188,12 +193,24 @@ describe('write tools', () => {
         contact_preference: 'smoke_signal',
       }),
     ).toMatchObject({ error: { code: expect.any(String) } });
-    await run('create_escalation', { user_name: 'A', user_email: 'a@b.co', category: 'payment', reason: 'r' });
+    await run('create_escalation', {
+      user_name: 'A',
+      user_email: 'a@b.co',
+      category: 'payment',
+      reason: 'r',
+      preferred_at: soon(),
+    });
     expect((store.escalations.at(-1) as { contact_preference?: string }).contact_preference).toBeUndefined();
   });
 
   it('leaves conversation_id unset when the request carries none', async () => {
-    await run('create_escalation', { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r' });
+    await run('create_escalation', {
+      user_name: 'A',
+      user_email: 'a@b.co',
+      category: 'account',
+      reason: 'r',
+      preferred_at: soon(),
+    });
     expect(store.escalations[0]).toMatchObject({ conversation_id: undefined });
   });
 

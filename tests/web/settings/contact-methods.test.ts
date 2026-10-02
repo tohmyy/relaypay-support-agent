@@ -33,7 +33,6 @@ vi.mock('@/lib/supabase.server', () => ({
 }));
 
 import { GET as customerMessages } from '@/app/api/support/conversations/[id]/messages/route';
-import { POST as callback } from '@/app/api/support/conversations/[id]/callback/route';
 import { GET as settingsGet, PUT as settingsPut } from '@/app/api/staff/settings/contact-methods/route';
 import {
   getContactMethods,
@@ -247,19 +246,4 @@ describe('what customers experience', () => {
     expect((await (await customerMessages(new Request('http://localhost/x'), ctx)).json()).callbackAvailable).toBe(true);
   });
 
-  it('refuses a callback request when callbacks are off, and records nothing', async () => {
-    setting({ text_chat: true, callback: false });
-    const res = await callback(new Request('http://localhost/x', { method: 'POST', body: '{}' }), ctx);
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'method-disabled' });
-    expect(h.restInsert).not.toHaveBeenCalled();
-    expect(h.restPatch).not.toHaveBeenCalled();
-  });
-
-  it('still takes a callback request when callbacks are on', async () => {
-    setting({ text_chat: false, callback: true });
-    const res = await callback(new Request('http://localhost/x', { method: 'POST', body: '{}' }), ctx);
-    expect(res.status).toBe(200);
-    expect(h.restInsert.mock.calls.some((c) => c[0] === 'escalations')).toBe(true);
-  });
 });

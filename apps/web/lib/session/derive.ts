@@ -16,7 +16,8 @@ export interface SessionView {
 export const IDLE_SESSION_VIEW: SessionView = { silenceCountdown: null, secondsLeft: null, sessionWarning: false };
 
 /** While the contact form is open the customer is expected to be quiet; the agent service does not measure silence then. */
-const HOLDS_SILENCE: SupportState[] = ['escalation-required', 'escalating'];
+// While a callback time is being agreed in the conversation the customer is expected to be quiet or typing.
+const HOLDS_SILENCE: SupportState[] = ['escalation-required'];
 
 export interface SessionViewInput {
   voiceState: VoiceState;

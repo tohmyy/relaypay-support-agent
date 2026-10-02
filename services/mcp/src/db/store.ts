@@ -37,6 +37,16 @@ export interface ToolCallRecord {
   error?: string | null;
 }
 
+/** Who a conversation belongs to: set by the web app's link, read back here so tools can be scoped to that customer. */
+export interface ConversationIdentity {
+  customer_id: string | null;
+  user_id: string | null;
+}
+export interface AppUserRow {
+  display_name: string;
+  email: string;
+}
+
 /** Every database operation the tools need. Tools depend on this, so tests can fake it. */
 export interface Store {
   /** Returns null when nothing matches, or when more than one record matches (ambiguous). */
@@ -45,6 +55,10 @@ export interface Store {
     email?: string;
     company_name?: string;
   }): Promise<CustomerRow | null>;
+  /** The signed-in customer a conversation was linked to; null when the conversation does not exist. */
+  getConversationIdentity(conversationId: string): Promise<ConversationIdentity | null>;
+  /** Name and email of a signed-in account (app_users). */
+  getAppUser(userId: string): Promise<AppUserRow | null>;
   getTransaction(transactionId: string): Promise<TransactionRow | null>;
   findPayout(q: { payout_id?: string; transaction_id?: string }): Promise<PayoutRow | null>;
   customerExists(customerId: string): Promise<boolean>;
@@ -65,6 +79,9 @@ export interface Store {
     category: string;
     reason: string;
     preferred_time?: string;
+    /** The callback instant (UTC ISO) and the customer's IANA timezone. */
+    preferred_at?: string;
+    preferred_timezone?: string;
     contact_preference?: 'text_chat' | 'callback';
     conversation_id?: string;
   }): Promise<string>;
@@ -98,6 +115,22 @@ export function createStore(db: SupabaseClient): Store {
       if (q.company_name) query = query.ilike('company_name', escapeLike(q.company_name));
       const rows = check(await query.limit(2)) as CustomerRow[];
       return rows.length === 1 ? rows[0] : null;
+    },
+    async getConversationIdentity(conversationId) {
+      const rows = check(
+        await db
+          .from('conversations')
+          .select('customer_id, user_id')
+          .eq('conversation_id', conversationId)
+          .limit(1),
+      ) as ConversationIdentity[];
+      return rows[0] ?? null;
+    },
+    async getAppUser(userId) {
+      const rows = check(
+        await db.from('app_users').select('display_name, email').eq('id', userId).limit(1),
+      ) as AppUserRow[];
+      return rows[0] ?? null;
     },
     async getTransaction(id) {
       const row = check(

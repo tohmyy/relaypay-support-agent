@@ -1,37 +1,23 @@
-import { Headset, Loader2 } from 'lucide-react';
-import type { ContactValues } from '@/lib/contact';
+import { Headset } from 'lucide-react';
 import { COPY } from '@/lib/copy';
 import type { SupportState } from '@/lib/support/derive';
-import ContactForm from './ContactForm';
 import EscalationConfirmation from './EscalationConfirmation';
 
 interface Props {
   support: SupportState;
   requestedTime: string | null;
-  /** The form only makes sense while the call is open, because the details are typed into it. */
-  canSubmit: boolean;
-  onSubmit(values: ContactValues): void;
 }
 
 /**
- * Needing a specialist is a normal next step, not a failure, so this uses neutral styling.
- * Shows the form while required, a quiet progress line while sending, then the confirmation.
+ * Needing a specialist is a normal next step, not a failure, so this uses neutral styling. It never asks for anything:
+ * the contact details come from the signed-in account and a callback time is agreed in the conversation (by voice or by
+ * typing), so there is no form. It explains that while a specialist is needed, then confirms.
  */
-export default function EscalationPanel({ support, requestedTime, canSubmit, onSubmit }: Props) {
+export default function EscalationPanel({ support, requestedTime }: Props) {
   if (support === 'escalated') {
     return (
       <section aria-live="polite" className="rounded-lg border border-line bg-surface p-4 shadow-card sm:p-6">
         <EscalationConfirmation requestedTime={requestedTime} />
-      </section>
-    );
-  }
-  if (support === 'escalating') {
-    return (
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-card sm:p-6">
-        <p role="status" className="flex items-center gap-2 text-base text-ink">
-          <Loader2 aria-hidden className="h-4 w-4 animate-spin-slow text-accent" />
-          {COPY.escalation.sending}
-        </p>
       </section>
     );
   }
@@ -45,9 +31,9 @@ export default function EscalationPanel({ support, requestedTime, canSubmit, onS
             {COPY.escalation.heading}
           </h2>
           <p className="mt-1 text-sm text-ink-secondary">{COPY.escalation.body}</p>
+          <p className="mt-1 text-sm text-ink-secondary">{COPY.escalation.timeHint}</p>
         </div>
       </div>
-      {canSubmit && <ContactForm onSubmit={onSubmit} />}
     </section>
   );
 }

@@ -10,6 +10,12 @@ export interface SessionLimits {
   countdownSeconds: number;
 }
 
+/** After a call ends the customer can resume it for this long, keeping the transcript (Build Plan V3, V3.14). */
+export const RESUME_GRACE_MS = 30_000;
+
+/** Ends a conversation can be resumed from. Mirrors `RESUMABLE_END_REASONS` in the agent service; a test keeps them equal. */
+export const RESUMABLE_END_REASONS = ['user-ended', 'agent-ended', 'silence-timeout', 'error'] as const;
+
 export const DEFAULT_LIMITS: SessionLimits = {
   sessionMaxSeconds: 360,
   warningSeconds: 30,

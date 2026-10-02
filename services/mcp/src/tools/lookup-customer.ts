@@ -19,8 +19,14 @@ export const lookupCustomer: ToolDef<z.infer<typeof lookupCustomerSchema>> = {
     company_name: z.string().optional(),
   },
   schema: lookupCustomerSchema,
-  async run(input, store) {
-    const c = await store.findCustomer(input);
+  accountScoped: true,
+  async run(input, store, ctx) {
+    // A signed-in conversation can only see its own account: another customer's id is "not found", and the signed-in
+    // customer's account is looked up whatever email or company name the model supplied.
+    if (ctx.identity && input.customer_id && input.customer_id !== ctx.identity.customerId) {
+      return { found: false };
+    }
+    const c = await store.findCustomer(ctx.identity ? { customer_id: ctx.identity.customerId } : input);
     if (!c) return { found: false };
     return {
       found: true,

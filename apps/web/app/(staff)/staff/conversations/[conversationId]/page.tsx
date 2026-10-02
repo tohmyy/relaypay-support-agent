@@ -8,13 +8,15 @@ import { requireStaff } from '@/lib/auth/dal';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import {
   getConversation,
+  getConversationCost,
   getConversationEscalation,
+  getConversationFeedback,
   getConversationTicket,
   getStaffCustomer,
   getTranscript,
 } from '@/lib/dashboard/data.server';
 import { formatDate } from '@/lib/dashboard/format';
-import { issueLabel, queueState } from '@/lib/dashboard/staff';
+import { formatUsd, issueLabel, queueState } from '@/lib/dashboard/staff';
 import { STAFF_COPY } from '@/lib/shell-copy';
 
 export const dynamic = 'force-dynamic';
@@ -31,10 +33,13 @@ export default async function StaffConversationPage({ params }: { params: Promis
   const conversation = await getConversation(conversationId);
   if (!conversation || !canAccessConversation(user, conversation)) notFound();
 
-  const [turns, ticket, customer] = await Promise.all([
+  const [turns, ticket, customer, feedback, cost] = await Promise.all([
     getTranscript(conversationId),
     getConversationTicket(conversationId),
     conversation.customer_id ? getStaffCustomer(conversation.customer_id) : Promise.resolve(null),
+    // Extras: a failure here must not hide the conversation itself.
+    getConversationFeedback(conversationId).catch(() => []),
+    getConversationCost(conversationId).catch(() => null),
   ]);
   const escalation = ticket?.ticket_id ? await getConversationEscalation(ticket.ticket_id) : null;
   const copy = STAFF_COPY.detail;
@@ -47,6 +52,7 @@ export default async function StaffConversationPage({ params }: { params: Promis
     ...(customer?.plan ? ([['Plan', customer.plan]] as [string, string][]) : []),
     ['Started', formatDate(conversation.started_at)],
     ['Status', queueState(conversation)],
+    [copy.cost, cost === null ? STAFF_COPY.queue.costUnknown : `${formatUsd(cost)} (${copy.costNote})`],
     ...(conversation.support_mode === 'human' ? ([['With', 'Support specialist (text chat)']] as [string, string][]) : []),
     ...(ticket?.ticket_id ? ([[copy.ticket, `${ticket.ticket_id} · ${issueLabel(ticket.category)}`]] as [string, string][]) : []),
     ...(escalation
@@ -56,6 +62,7 @@ export default async function StaffConversationPage({ params }: { params: Promis
         ] as [string, string][])
       : []),
   ];
+  const stageLabel = (stage: 'ai' | 'human') => copy.feedbackStages[stage];
   return (
     <>
       <PageTitle>{copy.title}</PageTitle>
@@ -70,6 +77,22 @@ export default async function StaffConversationPage({ params }: { params: Promis
             />
           </Card>
           {hasChat && <StaffChat conversationId={conversationId} />}
+          <Card title={copy.feedback}>
+            {feedback.length === 0 ? (
+              <p className="text-sm text-ink-secondary">{copy.feedbackNone}</p>
+            ) : (
+              <ul className="space-y-3 text-sm">
+                {feedback.map((f) => (
+                  <li key={f.stage}>
+                    <p className="font-medium text-ink">
+                      {stageLabel(f.stage)}: {copy.rating.replace('{n}', String(f.rating))}
+                    </p>
+                    {f.comment && <p className="mt-1 whitespace-pre-wrap text-ink-secondary">{f.comment}</p>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </div>
         <Card>
           <dl className="space-y-3 text-sm">

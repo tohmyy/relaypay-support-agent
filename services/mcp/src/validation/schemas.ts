@@ -52,11 +52,20 @@ export const CONTACT_PREFERENCES = ['text_chat', 'callback'] as const;
 export const createEscalationSchema = z.strictObject({
   ticket_id: id.optional(),
   customer_id: id.optional(),
-  user_name: text(120),
-  user_email: z.email().max(254),
+  /**
+   * Contact details come from the signed-in account (app_users) and override anything supplied here. They are only
+   * required in the rare case the conversation is not linked to an account.
+   */
+  user_name: text(120).optional(),
+  user_email: z.email().max(254).optional(),
   category: z.enum(ESCALATION_CATEGORIES),
   reason: text(1000),
+  /** Free-text display of the callback time; the validated instant is `preferred_at`. */
   preferred_time: text(100).optional(),
+  /** Callback instant, ISO 8601. Validated against the 1 calendar month window (validation/callback-window.ts). */
+  preferred_at: text(40).optional(),
+  /** IANA timezone of the customer, such as Africa/Lagos. */
+  preferred_timezone: text(64).optional(),
   /** How the customer chose to be helped: a live text chat with a specialist, or a callback. */
   contact_preference: z.enum(CONTACT_PREFERENCES).optional(),
 });

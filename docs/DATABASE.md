@@ -10,6 +10,8 @@ Supabase Postgres. Migrations are plain SQL in `supabase/migrations/` and are ap
 | `..._human_handoff.sql` | `conversations.support_mode` (`ai`/`human`/`ended`), `assigned_staff_id`, `staff_typing_at`, `customer_typing_at`; `conversation_turns.sender` (`customer`/`ai`/`staff`/`system`; null = a voice-era pair), `body`, `staff_user_id` (one message per row, `turn_number` null, ordered by `created_at`) |
 | `..._live_chat.sql` | `escalations.contact_preference` (`text_chat`/`callback`); `app_users.available`, `last_seen_at` (staff presence); `conversations.customer_last_read_at`, `staff_last_read_at`, `handoff_at`, `last_customer_message_at`, `last_staff_message_at`; `conversation_turns.client_msg_id` (unique with the conversation, so a retried message is stored once) |
 | `..._contact_methods.sql` | `app_settings` (`key`, `value` jsonb, `updated_at`, `updated_by`): administrator settings; `contact_methods` = `{"text_chat": bool, "callback": bool}`, no row = both on |
+| `..._escalation_preferred_at.sql` | `escalations.preferred_at` (timestamptz, the validated callback instant) and `preferred_timezone` (IANA name); `preferred_time` remains the display text |
+| `..._conversation_feedback.sql` | `conversation_feedback` (`conversation_id`, `stage` `ai`/`human`, `rating` 1 to 5, `comment`, `user_id`, `created_at`; unique per conversation and stage). Satisfaction only: it never changes `final_status`, `end_reason` or a ticket status |
 | `..._abuse_limits.sql` | `limit-reached` added to the `end_reason` check; `rate_limits` counters and the `rate_limit_hit` / `rate_limit_reset` functions the web app uses (service role only) |
 | `..._indexes_and_access.sql` | lookup indexes; RLS enabled on all tables with no policies; `anon`/`authenticated` revoked |
 

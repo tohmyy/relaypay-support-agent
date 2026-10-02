@@ -17,7 +17,10 @@ Vapi -> POST /vapi/events (call started, end-of-call report) -> conversation row
 |---|---|---|
 | `POST /chat/completions` (also `/v1/...`) | `Authorization: Bearer <AGENT_API_TOKEN>` | Vapi custom-LLM endpoint. OpenAI-style request; the last user message is the customer's utterance; Vapi's own system prompt is ignored |
 | `POST /vapi/events` | `X-Vapi-Secret: <VAPI_WEBHOOK_SECRET>` | `status-update` creates the conversation; `speech-update` feeds silence detection; `end-of-call-report` sets `ended_at`, `end_reason`, the final status (`escalated` stays, otherwise per the table below) and Vapi's summary. The first recorded `end_reason` wins. Disabled when the secret is unset (silence detection then has no speech events) |
-| `GET /health` | none | liveness |
+| `POST /text-turn` | `Authorization: Bearer <AGENT_API_TOKEN>` | one typed turn for a customer who cannot use a microphone (`{ conversationId, message }` → `{ response, ended }`). Same Session Controller, history, tools and budgets as a spoken turn, with no call: no silence or time limit, and a closer ends the session at once. Called by the web server only |
+| `POST /resume` | `Authorization: Bearer <AGENT_API_TOKEN>` | reopens a conversation that ended in the last 30 seconds for its owner (`{ conversationId, customerId }` → `{ reopened }` or `{ reopened: false, reason }`). Called by the web server only |
+| `GET /health` | none | liveness only (`{ ok: true }`) |
+| `GET /ready` | `Authorization: Bearer <AGENT_API_TOKEN>` | dependency readiness: the MCP server's `/health` and a Supabase probe, each with a 1.5 s timeout. `200 { ok, checks: { mcp, db } }`, `503` when either is down. The web app's `GET /api/support/ready` calls it (one automatic retry) and tells the customer only "available" or "unavailable" |
 
 Behavior:
 
@@ -43,12 +46,67 @@ decides when a session ends. State is in-process; the deadline is re-read from `
 
 | What | Behavior | Recorded as |
 |---|---|---|
-| Silence | `SILENCE_TIMEOUT_SECONDS` (15) of quiet, then a visible `SILENCE_COUNTDOWN_SECONDS` (10) countdown, then the call ends (+1 s grace on the server). Quiet is measured from the end of the assistant's speech or the customer's; not while the assistant is speaking, a turn is being processed, or the escalation contact form is open. The customer speaking cancels it | `end_reason = silence-timeout`, `final_status = abandoned`, events `silence_warning`, `session_ended` |
+| Silence | `SILENCE_TIMEOUT_SECONDS` (15) of quiet, then a visible `SILENCE_COUNTDOWN_SECONDS` (10) countdown, then the call ends (+1 s grace on the server). Quiet is measured from the end of the assistant's speech or the customer's; not while the assistant is speaking, a turn is being processed, or a callback time is still being agreed in the conversation (there is no form). The customer speaking cancels it | `end_reason = silence-timeout`, `final_status = abandoned`, events `silence_warning`, `session_ended` |
 | Time limit | `SESSION_MAX_SECONDS` (360). Warning event and (if live control is available) a spoken warning at `SESSION_WARNING_SECONDS` (30) before; hard end at the limit. Turns after the deadline get a fixed "session has ended" reply and never reach the model | `end_reason = session-timeout`, `final_status = abandoned`, events `session_warning`, `session_ended` |
 | "That's all" | Clear closers ("that's all", "I'm done", "thank you, goodbye", "I don't need anything else") get a fixed goodbye and the call ends once the goodbye has been spoken. Bare thanks ("okay, thanks") gets "anything else?"; a following "no" ends it, anything else carries on. These turns are stored but cost no model call | `end_reason = user-ended`, `final_status = resolved` (abandoned if no turns) |
+| Noise | A customer turn that is only noise (no word-like token; a digit or question mark is never noise) counts a strike; three in a row get a fixed apology (which suggests typing) and the call ends once it has been heard. A real sentence resets the count | `end_reason = low-confidence`, `final_status = abandoned`, event `low_confidence` |
+| Not signed in | A call still not linked to a customer when `LINK_GRACE_SECONDS` run out (`AGENT_REQUIRE_LINK`, default on in production) gets a fixed line and ends. See `docs/AUTH.md` | `end_reason = error`, `final_status = error`, event `unlinked_call` |
 | Vapi's own end | `end-of-call-report` `endedReason` is mapped: `exceeded-max-duration` → `session-timeout`, `silence-timed-out` → `silence-timeout`, `customer-ended-call` → `user-ended`, `assistant-ended-call*` → `agent-ended`, errors → `error`. An unmapped reason leaves `end_reason` null | |
 
 `final_status` stays the coarse outcome; `end_reason` says why. An escalated conversation stays `escalated`.
+
+### Resuming a conversation (Build Plan V3, V3.14, concern 16)
+
+After a call ends the customer's page keeps the transcript and offers **Resume conversation** for **30 seconds**
+(`RESUME_GRACE_MS`). It is not a pause: the call has already been hung up.
+
+1. The page runs the usual pre-call checks (before reopening, because an open conversation counts against the customer's
+   conversation limit), then `POST /api/support/conversations/<id>/resume`, which checks the customer owns it and asks the
+   voice agent to reopen it.
+2. The agent (`reopenConversation` in `session/persist.ts`) reopens it only if the same customer owns it, it ended no more than
+   30 seconds ago, the AI still has it, and the end was `user-ended`, `agent-ended`, `silence-timeout` or `error`. Not a
+   `session-timeout` (the six minutes are counted from the start, so nothing would be left), `limit-reached`, `low-confidence`,
+   `human-closed` or a hand-over to staff. It clears `ended_at` and `end_reason` (an escalation stays escalated), conditional on
+   the row still being as it was read, writes a `session_resumed` event, and drops its in-memory session so the new call
+   starts a fresh one. After 30 seconds it answers `expired` and the page offers only **Start another conversation**.
+3. The page starts a **new Vapi call** with `assistantOverrides.metadata.conversation_id` set to the old conversation id; the
+   agent resolves it (`metadata`, `call.metadata`, `call.assistantOverrides.metadata` or `call.assistant.metadata`, ahead of the
+   call id) so both calls share one conversation, and the transcript on screen simply continues.
+4. The earlier call's late `end-of-call-report` must not end the resumed conversation again: the controller remembers the
+   retired call id and ignores its report.
+5. The star rating for the voice leg is held back while the 30 seconds run, and shown after they pass or the customer says
+   "No, thanks" / starts another conversation.
+
+**Not verified live:** whether Vapi echoes the web SDK's `assistantOverrides.metadata` back in the custom-LLM request or the
+webhooks (the code accepts it in four places). If it does not, a resumed call is a new conversation on the server while the
+page still shows the old transcript, and the reopened conversation stays open until its inactivity cut-off. Check it with the
+live checklist below before relying on resume.
+
+### Live checklist (Build Plan V3; needs a person, a microphone and Vapi credits)
+
+Sign in as a customer, then: only `/support` offers a call (`/` redirects) → with the agent or MCP stopped, Start shows "isn't
+available right now" and starts nothing → mic prompt appears, and a blocked mic gives "Type instead" → the console is one
+column with chat bubbles; a typed message mid-call is answered → say "I'd like a callback": the assistant never asks for a
+name or email, asks for a specific day, time and timezone, and rejects "later" → say "that's all": the call hangs up and the
+ended screen offers View transcript → press **Resume conversation** within 30 seconds: same conversation id in the database,
+transcript kept; wait 30 seconds and Resume is gone → mute the microphone: the muted notice appears → the stars appear once the
+30 seconds pass; a staff close brings the second (specialist) rating → staff see both ratings and the estimated cost.
+`npm run vapi:setup -- --dry-run` still shows `speech-update`.
+
+### What "resolved" means (Build Plan V3, concerns 34, 35, 40)
+
+| Concept | Owner | Meaning |
+|---|---|---|
+| Hang-up | Session Controller + Vapi control | The media ends. Always follows the controller's decision to end |
+| `conversations.final_status` | `endConversation` / `finalStatusFor` | The **AI conversation's** outcome (`resolved`, `abandoned`, `escalated`, `error`). `resolved` means the customer confirmed they were done (or a human closed the chat), not that a ticket was closed |
+| `support_tickets.status` | Staff / a future tool | Stays `open` after creation; nothing here closes it |
+| Star rating | The feedback form and API | Satisfaction only. It **never** writes any of the rows above |
+
+Only the controller's deterministic paths write the conversation outcome: a clear closer, "anything else?" then a decline,
+silence, the time limit, a budget, noise (`low-confidence`), no sign-in (`error`), or a human closing the chat. The model's
+own words ("is that resolved?") never do; the system prompt tells it so. **Hang-up hardening:** the closing line is spoken with
+"end after spoken"; if that cannot be done it ends the call directly, and tries that once more; a failure writes a
+`hangup_failed` event, and the customer's page ends the call itself as soon as it sees the conversation recorded as ended.
 
 Three independent layers enforce the time limit: the controller's timer, refusal of turns past the deadline, and
 Vapi's own `maxDurationSeconds`, which `vapi:setup` sets to `SESSION_MAX_SECONDS + 10`. `vapi:setup` also subscribes to

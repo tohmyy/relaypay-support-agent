@@ -62,6 +62,8 @@ export async function rateLimitReset(key: string): Promise<void> {
 /** Limits used by the human chat, in one place. */
 export const CHAT_LIMITS = {
   customerMessages: { windowSeconds: 60, max: 30 },
+  /** Typed turns to the AI assistant: each one runs a paid model turn, so fewer than the human chat. */
+  textTurns: { windowSeconds: 60, max: 12 },
   staffMessages: { windowSeconds: 60, max: 60 },
   /** Typing signals are cheap but still bounded. */
   typing: { windowSeconds: 60, max: 40 },

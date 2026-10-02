@@ -20,6 +20,9 @@ interface ChatBody {
 interface CallInfo {
   id?: unknown;
   metadata?: { conversation_id?: unknown } | null;
+  /** A resumed call is started with the conversation id in its overrides (docs/VAPI.md, "Resuming"). */
+  assistantOverrides?: { metadata?: { conversation_id?: unknown } | null } | null;
+  assistant?: { metadata?: { conversation_id?: unknown } | null } | null;
 }
 
 /** Text of an OpenAI-style message content: a string, or an array of {type:'text', text} parts. */
@@ -61,7 +64,10 @@ export function resolveConversationId(input: {
   header?: string | string[];
 }): string | undefined {
   const fromMetadata =
-    clean(input.metadata?.conversation_id) ?? clean(input.call?.metadata?.conversation_id);
+    clean(input.metadata?.conversation_id) ??
+    clean(input.call?.metadata?.conversation_id) ??
+    clean(input.call?.assistantOverrides?.metadata?.conversation_id) ??
+    clean(input.call?.assistant?.metadata?.conversation_id);
   if (fromMetadata) return fromMetadata;
   const callId = clean(input.call?.id);
   if (callId) return `vapi_${callId}`.slice(0, 64);

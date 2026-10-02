@@ -57,9 +57,8 @@ describe('deriveSessionView', () => {
     expect(at(20, { quietSinceMs: null }).silenceCountdown).toBeNull();
   });
 
-  it('is held while the escalation contact form is open', () => {
+  it('is held while a callback time is being agreed in the conversation', () => {
     expect(at(20, { supportState: 'escalation-required' }).silenceCountdown).toBeNull();
-    expect(at(20, { supportState: 'escalating' }).silenceCountdown).toBeNull();
     expect(at(20, { supportState: 'escalated' }).silenceCountdown).toBe(5);
   });
 

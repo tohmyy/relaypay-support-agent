@@ -12,6 +12,8 @@ const schema = z.object({
     z.coerce.number().int().min(0).max(65535).default(4000),
   ),
   MCP_HOST: z.preprocess((v) => (v === '' ? undefined : v), z.string().default('127.0.0.1')),
+  // Account tools only answer for a conversation linked to a signed-in customer. Blank = on only in production.
+  MCP_REQUIRE_IDENTITY: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['0', '1']).optional()),
 });
 
 export type Env = z.infer<typeof schema>;

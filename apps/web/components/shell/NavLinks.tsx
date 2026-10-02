@@ -1,6 +1,6 @@
 'use client';
 
-import { CreditCard, FileText, Headphones, LayoutDashboard, Landmark, ListChecks, MessagesSquare, Settings } from 'lucide-react';
+import { CreditCard, FileText, Headphones, History, LayoutDashboard, Landmark, ListChecks, MessagesSquare, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useOptionalInbox } from './StaffInbox';
@@ -11,6 +11,7 @@ const ICONS = {
   payouts: Landmark,
   invoices: FileText,
   support: Headphones,
+  history: History,
   settings: Settings,
   queue: ListChecks,
   conversations: MessagesSquare,
@@ -24,10 +25,13 @@ export interface NavItem {
   badge?: 'inbox';
   /** Pages under this path also count as "here" (for example a conversation under Conversations). */
   prefix?: boolean;
+  /** Paths under `prefix` that belong to another item (so only one item is ever marked current). */
+  exclude?: string[];
 }
 
-export function isCurrent(pathname: string, item: Pick<NavItem, 'href' | 'prefix'>): boolean {
+export function isCurrent(pathname: string, item: Pick<NavItem, 'href' | 'prefix' | 'exclude'>): boolean {
   if (pathname === item.href) return true;
+  if (item.exclude?.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return false;
   return Boolean(item.prefix) && pathname.startsWith(`${item.href}/`);
 }
 

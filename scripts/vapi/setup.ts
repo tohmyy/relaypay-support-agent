@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import {
+  assertServerMessages,
   assistantPatch,
   credentialName,
   credentialPayload,
@@ -126,6 +127,9 @@ try {
       backgroundSpeechDenoisingPlan: current.backgroundSpeechDenoisingPlan,
     },
   });
+  // The agent needs speech-update (silence detection, hang-up after the goodbye): fail loudly, also in a dry run.
+  assertServerMessages(patch);
+  console.log('\nserverMessages check: includes speech-update.');
   console.log('\nChanges to the assistant:');
   console.log(JSON.stringify(redact(patch), null, 2));
   console.log('\nLeft as configured: voice, transcriber, name, and everything else not listed above.');
