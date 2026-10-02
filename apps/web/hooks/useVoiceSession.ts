@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { PublicConversationState } from '@/lib/conversation-state';
+import { useSessionClock } from '@/hooks/useSessionClock';
+import type { PublicConversationState, PublicEndReason } from '@/lib/conversation-state';
 import { COPY } from '@/lib/copy';
+import type { SessionView } from '@/lib/session/derive';
 import { deriveSupportState, emptyBackendState, type SupportState } from '@/lib/support/derive';
 import { addTypedTurn, applyTranscript, type ConversationTurn } from '@/lib/transcript';
 import type { VoiceClient, VoiceClientFactory, VoiceClientHandlers } from '@/lib/voice/client';
@@ -27,7 +29,12 @@ export interface VoiceSessionOptions {
   /** Overridable for tests; defaults to a real browser microphone check. */
   checkMic?: () => Promise<ErrorKind | null>;
   pollMs?: number;
+  /** Overridable for tests; the clock the session notices count against. */
+  clock?: () => number;
 }
+
+/** Looks at the state API again after a call ends, until the recorded end reason shows up. */
+const END_REASON_POLL_MS = [1500, 3500, 6000];
 
 export interface VoiceSession {
   voice: VoiceModel;
@@ -35,6 +42,10 @@ export interface VoiceSession {
   turns: ConversationTurn[];
   backend: PublicConversationState;
   level: number;
+  /** Silence countdown and time-limit notices, derived from the voice state and the server's limits. */
+  session: SessionView;
+  /** Why the session ended, once known (the recorded reason, or a provisional one while it is read). */
+  endReason: PublicEndReason | null;
   start(): Promise<void>;
   end(): Promise<void>;
   submitContact(details: ContactDetails): void;
@@ -48,7 +59,7 @@ export function contactMessage({ name, email, preferredTime }: ContactDetails): 
 
 /** Owns the voice state, transcript and backend snapshot for one support session. */
 export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
-  const { createClient, fetchState, checkMic = checkMicrophone, pollMs = 3000 } = options;
+  const { createClient, fetchState, checkMic = checkMicrophone, pollMs = 3000, clock } = options;
   const [voice, dispatch] = useReducer(voiceReducer, initialVoiceModel);
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [backend, setBackend] = useState<PublicConversationState>(emptyBackendState);
@@ -58,6 +69,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
 
   const clientRef = useRef<VoiceClient | null>(null);
   const idRef = useRef<string | null>(null);
+  const endedByCustomer = useRef(false);
   const stateRef = useRef(voice.state);
   useEffect(() => {
     stateRef.current = voice.state;
@@ -78,6 +90,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     setContactSubmitted(false);
     setLevel(0);
     idRef.current = null;
+    endedByCustomer.current = false;
     setConversationId(null);
 
     const micProblem = await checkMic();
@@ -116,7 +129,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     }
   }, [checkMic, createClient, refresh]);
 
-  const end = useCallback(async () => {
+  const hangUp = useCallback(async () => {
     if (!isActive(stateRef.current)) return;
     dispatch({ type: 'END_REQUESTED' });
     try {
@@ -127,6 +140,12 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     dispatch({ type: 'CALL_ENDED' });
     void refresh();
   }, [refresh]);
+
+  /** The customer's own "End conversation": never reported as silence or a time limit. */
+  const end = useCallback(async () => {
+    if (isActive(stateRef.current)) endedByCustomer.current = true;
+    await hangUp();
+  }, [hangUp]);
 
   const submitContact = useCallback(
     (details: ContactDetails) => {
@@ -157,5 +176,24 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     [backend, voice.state, contactSubmitted],
   );
 
-  return { voice, support, turns, backend, level, start, end, submitContact };
+  const { view: session, provisionalEnd } = useSessionClock({
+    voiceState: voice.state,
+    supportState: support,
+    backend,
+    onExpired: () => void hangUp(),
+    now: clock,
+  });
+
+  // The agent service records why it ended the call, which can land just after the call drops (and, for a
+  // customer-ended call, arrives with Vapi's report), so look a few more times until it does.
+  useEffect(() => {
+    if (voice.state !== 'ended' || !conversationId || backend.endReason) return;
+    const timers = END_REASON_POLL_MS.map((ms) => setTimeout(() => void refresh(), ms));
+    return () => timers.forEach(clearTimeout);
+  }, [voice.state, conversationId, backend.endReason, refresh]);
+
+  const endReason =
+    backend.endReason ?? (voice.state === 'ended' && !endedByCustomer.current ? provisionalEnd : null);
+
+  return { voice, support, turns, backend, level, session, endReason, start, end, submitContact };
 }
