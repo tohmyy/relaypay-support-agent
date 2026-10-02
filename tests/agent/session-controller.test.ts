@@ -313,4 +313,45 @@ describe('SessionController', () => {
       expect(d).toEqual({ kind: 'reply', text: SESSION_TEXT.ended });
     });
   });
+
+  describe('speech to request gap (for latency timings)', () => {
+    it('is the time from the customer going quiet to the request arriving, and is used once', async () => {
+      const s = setup();
+      await quietCall(s);
+      await s.user('started');
+      await s.user('stopped');
+      await vi.advanceTimersByTimeAsync(450);
+      expect(s.session.consumeSpeechGapMs(ID)).toBe(450);
+      expect(s.session.consumeSpeechGapMs(ID)).toBeUndefined();
+    });
+
+    it('uses the latest time the customer went quiet', async () => {
+      const s = setup();
+      await quietCall(s);
+      await s.user('started');
+      await s.user('stopped');
+      await vi.advanceTimersByTimeAsync(1000);
+      await s.user('started');
+      await s.user('stopped');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(s.session.consumeSpeechGapMs(ID)).toBe(200);
+    });
+
+    it('is unknown when no speech event was seen, for an unknown call, or when the event is stale', async () => {
+      const s = setup();
+      expect(s.session.consumeSpeechGapMs('vapi_unknown')).toBeUndefined();
+      await quietCall(s);
+      expect(s.session.consumeSpeechGapMs(ID)).toBeUndefined();
+      await s.user('started');
+      await s.user('stopped');
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(s.session.consumeSpeechGapMs(ID)).toBeUndefined();
+    });
+
+    it('ignores the assistant going quiet', async () => {
+      const s = setup();
+      await quietCall(s); // assistant started and stopped
+      expect(s.session.consumeSpeechGapMs(ID)).toBeUndefined();
+    });
+  });
 });

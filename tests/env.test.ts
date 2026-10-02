@@ -58,6 +58,21 @@ describe('env validation', () => {
     expect(() => parseAgent({ ...full, SILENCE_COUNTDOWN_SECONDS: '0' })).toThrow('SILENCE_COUNTDOWN_SECONDS');
   });
 
+  it('defaults the latency settings: acknowledgement after 2.5s, pre-start off', () => {
+    const d = parseAgent(full);
+    expect([d.ACK_AFTER_MS, d.AGENT_PREWARM, d.PREWARM_MAX, d.PREWARM_TTL_SECONDS]).toEqual([2500, '0', 8, 90]);
+    expect(parseAgent({ ...full, ACK_AFTER_MS: '' }).ACK_AFTER_MS).toBe(2500);
+    const tuned = parseAgent({ ...full, ACK_AFTER_MS: '1500', AGENT_PREWARM: '1', PREWARM_MAX: '3', PREWARM_TTL_SECONDS: '45' });
+    expect([tuned.ACK_AFTER_MS, tuned.AGENT_PREWARM, tuned.PREWARM_MAX, tuned.PREWARM_TTL_SECONDS]).toEqual([1500, '1', 3, 45]);
+  });
+
+  it('rejects nonsense latency settings by name', () => {
+    expect(() => parseAgent({ ...full, AGENT_PREWARM: 'yes' })).toThrow('AGENT_PREWARM');
+    expect(() => parseAgent({ ...full, ACK_AFTER_MS: '50' })).toThrow('ACK_AFTER_MS');
+    expect(() => parseAgent({ ...full, PREWARM_MAX: '0' })).toThrow('PREWARM_MAX');
+    expect(() => parseAgent({ ...full, PREWARM_TTL_SECONDS: 'soon' })).toThrow('PREWARM_TTL_SECONDS');
+  });
+
   it('never leaks values in errors', () => {
     const bad = { ...full, SUPABASE_URL: 'not-a-url-secret-value' };
     for (const fn of [() => parseServerEnv(bad), () => parseMcp(bad)]) {

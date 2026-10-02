@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAgentServer, type AgentServerOptions } from '../../services/agent/src/server';
+import { ACK_TEMPLATES } from '../../services/agent/src/acks';
 import { SAFE_SPOKEN_ERROR, SLOW_FILLER } from '../../services/agent/src/vapi';
 
 const TOKEN = 'agent-token-0123456789';
@@ -54,7 +55,8 @@ describe('POST /chat/completions', () => {
     expect(r.status).toBe(200);
     const json = await r.json();
     expect(json.choices[0].message).toEqual({ role: 'assistant', content: 'echo: check TXN-9001' });
-    expect(calls).toEqual([{ conversationId: 'vapi_call1', userMessage: 'check TXN-9001' }]);
+    // The turn also carries its stopwatch and progress, which are not part of what Vapi sent.
+    expect(calls).toMatchObject([{ conversationId: 'vapi_call1', userMessage: 'check TXN-9001' }]);
   });
 
   it('also serves /v1/chat/completions', async () => {
@@ -74,6 +76,8 @@ describe('POST /chat/completions', () => {
     expect(chunks[0].choices[0].delta.role).toBe('assistant');
     expect(chunks.map((c) => c.choices[0].delta.content ?? '').join('')).toBe('echo: check TXN-9001');
     expect(chunks.at(-1).choices[0].finish_reason).toBe('stop');
+    // A fast turn is not interrupted by any acknowledgement.
+    for (const phrases of Object.values(ACK_TEMPLATES)) for (const p of phrases) expect(text).not.toContain(p);
     expect(text).not.toContain(SLOW_FILLER);
   });
 
@@ -92,7 +96,10 @@ describe('POST /chat/completions', () => {
       .filter((e) => e.startsWith('data: {'))
       .map((e) => JSON.parse(e.slice(6)).choices[0].delta.content ?? '')
       .join('');
-    expect(spoken).toBe(`${SLOW_FILLER}Done.`);
+    // The request mentions TXN-9001, so the acknowledgement fits a transaction lookup.
+    expect(spoken.endsWith(' Done.')).toBe(true);
+    const ack = spoken.slice(0, -'Done.'.length).trimEnd();
+    expect(ACK_TEMPLATES.transaction_lookup).toContain(ack);
   });
 
   it('turns failures into a safe spoken message without leaking the error', async () => {
@@ -163,6 +170,7 @@ describe('Session Controller integration', () => {
       },
       afterTurn: (...args: unknown[]) => void log.after.push(args),
       handleVapiMessage: async (id: string, message: Record<string, unknown>) => void log.vapi.push({ id, message }),
+      consumeSpeechGapMs: () => undefined,
       dispose: () => void (log.disposed = true),
     };
     return { session: session as never, log };

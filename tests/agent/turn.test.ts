@@ -109,6 +109,7 @@ describe('runTurn', () => {
       sources: ['Why Is My Payment Delayed?'],
       toolsUsed: [],
       escalated: false,
+      turnNumber: 1,
     });
     expect(calls[0].prompt).toContain('Why is my payment late?');
     expect(calls[0].options.tools).toEqual([]);
