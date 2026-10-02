@@ -19,6 +19,9 @@ Missing or invalid variables are reported by name only, never by value.
 | `SESSION_WARNING_SECONDS` | agent, web server | no | "Ending soon" warning window before the limit. Default 30 |
 | `SILENCE_TIMEOUT_SECONDS` | agent, web server | no | Quiet time before the countdown shows. Default 15 |
 | `SILENCE_COUNTDOWN_SECONDS` | agent, web server | no | Visible countdown length; the call ends when it runs out. Default 10 |
+| `ACK_AFTER_MS` | agent | no | Milliseconds before a slow reply gets a spoken acknowledgement. Default 2500 (200 to 30000) |
+| `AGENT_PREWARM` | agent | no | `1` keeps an agent process started per live call. **Default off**; compare first (`docs/PERFORMANCE.md`) |
+| `PREWARM_MAX`, `PREWARM_TTL_SECONDS` | agent | no | Most warm processes at once (default 8) and how long an unused one lives (default 90) |
 | `VAPI_API_KEY` (agent) | agent | yes | Optional; lets the agent service hang up a live call. Same key as above |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |

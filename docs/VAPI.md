@@ -25,9 +25,12 @@ Behavior:
   `vapi_<id>`, then an `X-Conversation-Id` header. Only `[A-Za-z0-9_.:-]` up to 64 characters is accepted. Confirmed
   against real Vapi traffic: requests contain `call.id`, `messages`, `stream: true`, and no app metadata by default.
 - **Streaming**: SSE chunks in OpenAI format, ending with `[DONE]`; non-streaming JSON also works.
-- **Slow replies**: if a turn takes longer than 2.5 seconds the caller hears "One moment while I check that." first.
-  The filler is transport only and is not stored as the answer. Turns take roughly 3 to 15 seconds (the Agent SDK
-  starts a subprocess per turn), so expect pauses on tool lookups.
+- **Slow replies**: if a turn takes longer than `ACK_AFTER_MS` (2.5 seconds) the caller hears a short acknowledgement
+  that fits what the turn is doing ("I'll check that transaction for you.", "Let me check the payout status.", ...),
+  rotating so it does not repeat back to back; "One moment while I check that." remains the fallback when the turn cannot
+  be classified (`docs/PERFORMANCE.md`). It is transport only and is not stored as the answer. Turns take roughly 3 to 15
+  seconds (the Agent SDK starts a subprocess per turn), so expect pauses on tool lookups; `npm run report` breaks the time
+  down. The optional `AGENT_PREWARM=1` starts that subprocess ahead of time.
 - **Failures**: any error becomes a short spoken "I'm having trouble right now..." with HTTP 200 so the call never
   goes silent; technical details go to the server log only.
 - **Ordering**: turns of one call run one at a time, so a caller interrupting cannot interleave two turns.

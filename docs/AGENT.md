@@ -86,6 +86,15 @@ and escalation marking. Details and the end-reason table are in `docs/VAPI.md`.
 Offline tests: `tests/agent/completion.test.ts`, `tests/agent/session-controller.test.ts` (fake timers), and the
 session cases in `tests/agent/server.test.ts` and `tests/agent/vapi.test.ts`.
 
+## Latency
+
+Each turn carries a stopwatch from the moment the request arrives (`services/agent/src/timing.ts`) and a progress object
+that `runTurn` fills in (knowledge found, which tool the model is using). The server uses the progress to pick the spoken
+acknowledgement for a slow turn (`acks.ts`) and stores the stopwatch as `conversation_turns.timings` after the reply has
+gone out. History reads run together, the knowledge log is written while the model works, and an optional pre-started
+agent process (`warm.ts`, `AGENT_PREWARM=1`, off by default) can remove the process start from a turn. None of it changes
+the prompt or the answer. See `docs/PERFORMANCE.md`.
+
 ## Logging
 
 Each turn stores `latency_ms` and `cost_usd`; failures are written as `error` events and as JSON log lines. Retrieval queries are masked before they are stored. See `OBSERVABILITY.md`.

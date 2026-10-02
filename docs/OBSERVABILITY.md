@@ -11,6 +11,7 @@ server log.
 | Conversation end | `conversations` (`ended_at`, `final_status`, **`end_reason`**, `summary`) and a `call_ended` row in `conversation_events` (`endedReason`, `durationSeconds`, `cost`) | Vapi `end-of-call-report` webhook, or the Session Controller when it ends the call first (first recorded `end_reason` wins) |
 | Why a session ended | **`conversations.end_reason`**: `user-ended`, `silence-timeout`, `session-timeout`, `agent-ended`, `human-closed`, `low-confidence`, `error` (null when Vapi's reason is unmapped). `final_status` stays the coarse outcome | Session Controller / webhook |
 | Session lifecycle events | `conversation_events`: `silence_warning` (`countdown_seconds`), `session_warning` (`seconds_left`), `session_ended` (`end_reason`, `final_status`, `duration_seconds`) | Session Controller, `endConversation` |
+| Where a turn's time went | **`conversation_turns.timings`** (JSON: queue, controller, history, retrieval, agent start, model, tools, save, first reply byte, acknowledgement, pre-start) and `vapi_latency_ms` in the `call_ended` event (Vapi's own averages, if its report carries them); see `docs/PERFORMANCE.md` | agent server, `runTurn`, Vapi report |
 | Last activity | **`conversations.last_activity_at`**, stamped on each stored turn and at session end | agent |
 | User and assistant turns | `conversation_turns` (transcript, reply, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**) | agent |
 | Retrievals | `retrieval_logs` (query with personal data masked, source titles, summary) | agent retrieval |
@@ -18,6 +19,9 @@ server log.
 | Tickets | `support_tickets` (conversation id) | MCP `create_support_ticket` |
 | Escalations | `escalations` (conversation id, ticket id, status, requested time) | MCP `create_escalation` |
 | Errors | `conversation_events` with `event_type = 'error'` and `{source, message}` (message masked and cut to 300 characters); `tool_calls` rows with `status = 'failed'`; JSON lines on stderr | agent (`agent.runTurn`, `vapi.webhook`), MCP |
+
+`timings` was added in V2 Iteration 3 (migration `20261002000009_turn_timings.sql`, nullable, no backfill). Apply it before
+running the new agent: the server writes it after each turn.
 
 Bold columns were added in Phase 10 (migration `..._observability.sql`, all nullable), except `end_reason` and
 `last_activity_at`, which come from V2 Iteration 1 (migration `20261001000008_session_lifecycle.sql`, nullable, no

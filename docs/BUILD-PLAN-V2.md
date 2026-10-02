@@ -2655,14 +2655,14 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 
 ## Performance
 
-- [~] Latency instrumentation (turn `latency_ms` / `cost_usd`; tool `duration_ms` — not full pipeline segments)
+- [~] Latency instrumentation (per-turn `timings` segments plus Vapi-side averages once the report shape is confirmed live; time to first audio is a server-side proxy)
 - [ ] Baseline latency measured (product targets from live data)
 - [ ] Major latency sources identified
 - [ ] Unnecessary agent calls reduced
 - [ ] Context reuse investigated
 - [ ] MCP result reuse implemented where safe
-- [ ] Dynamic acknowledgement templates (fixed `SLOW_FILLER` only today)
-- [~] Tool-call instrumentation (`tool_calls.duration_ms`)
+- [x] Dynamic acknowledgement templates (contextual, rotating, from a fixed library; `SLOW_FILLER` is the generic fallback)
+- [~] Tool-call instrumentation (`tool_calls.duration_ms`; per-turn `mcp_ms` and `tools[]` as the agent sees them)
 - [~] Agent-call instrumentation (per-turn latency; not conversation-level agent_calls counters)
 
 ## Human Support
