@@ -1,6 +1,6 @@
 'use client';
 
-import { CreditCard, FileText, Headphones, History, LayoutDashboard, Landmark, ListChecks, MessagesSquare, Settings } from 'lucide-react';
+import { CreditCard, FileText, Headphones, History, LayoutDashboard, Landmark, ListChecks, MessagesSquare, Settings, Ticket } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useOptionalInbox } from './StaffInbox';
@@ -14,6 +14,7 @@ const ICONS = {
   history: History,
   settings: Settings,
   queue: ListChecks,
+  escalations: Ticket,
   conversations: MessagesSquare,
 } as const;
 

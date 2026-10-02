@@ -13,6 +13,7 @@ export const dynamic = 'force-dynamic';
 
 const NAV: NavItem[] = [
   { href: '/staff', label: STAFF_COPY.nav.queue, icon: 'queue', badge: 'inbox' },
+  { href: '/staff/escalations', label: STAFF_COPY.nav.escalations, icon: 'escalations', prefix: true },
   { href: '/staff/conversations', label: STAFF_COPY.nav.conversations, icon: 'conversations', prefix: true },
 ];
 /** Settings are for administrators only. */

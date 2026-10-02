@@ -1,11 +1,15 @@
 import { canAccessConversation, type AccessUser } from '@/lib/auth/access';
 import { hasUnread } from '@/lib/human/messages';
+import { QUEUE_STATE_BADGES, type QueueStateName } from './badges';
 import { formatDate } from './format';
 
 /** What the staff queue reads. Customer fields are limited to company and contact; notes and KYC are never selected. */
 export const QUEUE_CONVERSATION_COLUMNS =
   'conversation_id,customer_id,started_at,ended_at,final_status,end_reason,support_mode,assigned_staff_id,' +
   'handoff_at,staff_last_read_at,last_customer_message_at';
+
+/** The staff archive adds the channel the conversation happened on. */
+export const ARCHIVE_CONVERSATION_COLUMNS = `${QUEUE_CONVERSATION_COLUMNS},channel`;
 
 export interface QueueConversationRow {
   conversation_id: string;
@@ -19,6 +23,7 @@ export interface QueueConversationRow {
   handoff_at?: string | null;
   staff_last_read_at?: string | null;
   last_customer_message_at?: string | null;
+  channel?: string | null;
 }
 
 export interface QueueTicketRow {
@@ -27,6 +32,9 @@ export interface QueueTicketRow {
   category: string | null;
   priority: string | null;
   status: string | null;
+  /** Only read where a page shows it (the detail and accept card), not by the queue. */
+  summary?: string | null;
+  created_at?: string | null;
 }
 
 export interface QueueCustomerRow {
@@ -66,7 +74,7 @@ export function formatUsd(n: number | null | undefined): string {
   return n === null || n === undefined || !Number.isFinite(n) ? '—' : USD.format(n);
 }
 
-export type QueueState = 'open' | 'waiting' | 'in-progress' | 'escalated' | 'resolved';
+export type QueueState = QueueStateName;
 
 export interface QueueItem {
   conversationId: string;
@@ -103,15 +111,6 @@ const ISSUE_LABELS: Record<string, string> = {
 };
 
 export const issueLabel = (category: string | null | undefined) => ISSUE_LABELS[category ?? ''] ?? 'General question';
-
-const STATE_LABELS: Record<QueueState, string> = {
-  open: 'Open',
-  waiting: 'Waiting for staff',
-  'in-progress': 'In progress',
-  escalated: 'Escalated',
-  // The AI conversation's outcome (the customer confirmed they were done), not that any ticket was closed.
-  resolved: 'Conversation resolved',
-};
 
 /**
  * With a specialist (`support_mode = human`): waiting until someone takes it, then in progress. Otherwise the call is
@@ -160,7 +159,7 @@ export function buildStaffQueue(
       return {
         conversationId: c.conversation_id,
         state,
-        statusLabel: STATE_LABELS[state],
+        statusLabel: QUEUE_STATE_BADGES[state].label,
         customer: customer?.company_name ?? (c.customer_id ? c.customer_id : 'Unknown caller'),
         issue: issueLabel(ticket?.category),
         ticket: ticket?.ticket_id ?? null,

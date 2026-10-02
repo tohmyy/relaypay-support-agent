@@ -4,9 +4,12 @@ import { sameOrigin } from '@/lib/auth/origin';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import { getConversation } from '@/lib/dashboard/data.server';
 import { json, logFailure } from '@/lib/http';
-import { claimConversation } from '@/lib/human/server';
+import { claimConversation, lifecycleRefusal } from '@/lib/human/server';
 
-/** Take an unassigned conversation. Two people clicking at once: one gets it, the other is told it is taken. */
+/**
+ * Take an unassigned conversation. Two people clicking at once: the database gives it to one, and the other gets 409
+ * with who has it now.
+ */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   if (!sameOrigin(request)) return json({ error: 'forbidden' }, 403);
   const user = await getCurrentUser();
@@ -16,9 +19,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   try {
     const row = await getConversation(id);
     if (!row || !canAccessConversation(user, row)) return json({ error: 'not found' }, 404);
-    const outcome = await claimConversation(user, id, row);
-    if (outcome === 'claimed' || outcome === 'already-mine') return json({ assigned: true });
-    return json({ error: outcome }, 409);
+    const result = await claimConversation(user.id, id);
+    if (result.outcome === 'claimed' || result.outcome === 'already-mine') return json({ assigned: true });
+    return lifecycleRefusal(result);
   } catch (error) {
     logFailure('claim failed', error);
     return json({ error: 'unavailable' }, 503);

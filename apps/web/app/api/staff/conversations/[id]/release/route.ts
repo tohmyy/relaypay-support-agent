@@ -4,12 +4,12 @@ import { sameOrigin } from '@/lib/auth/origin';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import { getConversation } from '@/lib/dashboard/data.server';
 import { json, logFailure } from '@/lib/http';
-import { addSystemMessage } from '@/lib/human/server';
-import { restPatch } from '@/lib/supabase.server';
+import { lifecycleRefusal, releaseConversation } from '@/lib/human/server';
 
 /**
  * Give a conversation back to the queue (for a break, or because someone else is better placed). The person who has it
- * or an admin may; conditional on it still being open and held by that person, so it happens once.
+ * or an admin may. The conversation, ticket and escalation go back to open together, once: a repeat gets 409 with the
+ * current state.
  */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   if (!sameOrigin(request)) return json({ error: 'forbidden' }, 403);
@@ -20,18 +20,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   try {
     const row = await getConversation(id);
     if (!row || !canAccessConversation(user, row)) return json({ error: 'not found' }, 404);
-    if (row.support_mode !== 'human' || row.ended_at) return json({ error: 'not-open' }, 409);
-    if (!row.assigned_staff_id) return json({ error: 'not-assigned' }, 409);
-    if (row.assigned_staff_id !== user.id && user.role !== 'support_admin') return json({ error: 'taken' }, 409);
-
-    const released = await restPatch(
-      'conversations',
-      `conversation_id=eq.${encodeURIComponent(id)}&support_mode=eq.human&ended_at=is.null&assigned_staff_id=eq.${encodeURIComponent(row.assigned_staff_id)}`,
-      { assigned_staff_id: null, staff_typing_at: null, last_activity_at: new Date().toISOString() },
-    );
-    if (released.length === 0) return json({ error: 'not-open' }, 409);
-    await addSystemMessage(id, 'Your specialist has returned this conversation to the queue. Another specialist will join you shortly.');
-    return json({ released: true });
+    const result = await releaseConversation(user.id, id);
+    if (result.outcome === 'released') return json({ released: true });
+    return lifecycleRefusal(result);
   } catch (error) {
     logFailure('release failed', error);
     return json({ error: 'unavailable' }, 503);

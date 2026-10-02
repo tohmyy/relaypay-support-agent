@@ -7,8 +7,7 @@ import { getConversation, getHumanMessages, getStaffProfiles, isAnyStaffOnline }
 import { json, logFailure, readJson } from '@/lib/http';
 import { getContactMethods } from '@/lib/settings/contact-methods.server';
 import { cleanMessage, isUuid, typingActive } from '@/lib/human/messages';
-import { modeOf, touchOpenHuman } from '@/lib/human/server';
-import { restInsert } from '@/lib/supabase.server';
+import { addHumanMessage, modeOf } from '@/lib/human/server';
 
 const NEUTRAL = {
   supportMode: 'ai',
@@ -83,16 +82,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     const limit = await rateLimit(`chat:c:${id}`, CHAT_LIMITS.customerMessages);
     if (!limit.allowed) return json({ error: 'rate-limited' }, 429, { 'Retry-After': String(limit.retryAfterSeconds) });
 
-    // The write that gates the insert: if the conversation was closed a moment ago, nothing is stored.
-    const now = new Date().toISOString();
-    const open = await touchOpenHuman(id, { customer_typing_at: null, last_customer_message_at: now });
-    if (!open) return json({ error: 'not-open' }, 409);
-    // A retry with the same client id is recognised by the unique index and stored once.
-    await restInsert(
-      'conversation_turns',
-      { conversation_id: id, sender: 'customer', body: clean.body, ...(clientId ? { client_msg_id: clientId } : {}) },
-      clientId ? { onConflict: 'conversation_id,client_msg_id' } : {},
-    );
+    // The database locks and re-checks the conversation before inserting, so a close that wins the race prevents this
+    // message from landing afterward. A retried client id is accepted without creating a duplicate.
+    const sent = await addHumanMessage({ conversationId: id, sender: 'customer', body: clean.body, clientId });
+    if (sent.outcome === 'closed') return json({ error: 'not-open' }, 409);
+    if (sent.outcome === 'not-found') return json({ error: 'not found' }, 404);
     return json({ ok: true }, 201);
   } catch (error) {
     logFailure('customer message failed', error);

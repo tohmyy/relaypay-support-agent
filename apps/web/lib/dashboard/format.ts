@@ -59,6 +59,14 @@ export function formatDate(value: string | null | undefined): string {
   return new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
+/** "16 Aug 2026, 14:05 UTC": the full moment, for the staff tables where the day alone is not enough. */
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return '—';
+  return `${formatDate(value)}, ${new Date(time).toISOString().slice(11, 16)} UTC`;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   'outgoing payout': 'Outgoing payout',
   'invoice payment': 'Invoice payment',

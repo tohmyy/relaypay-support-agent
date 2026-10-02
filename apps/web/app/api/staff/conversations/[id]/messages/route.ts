@@ -6,8 +6,7 @@ import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import { getConversation, getHumanMessages, getStaffProfiles } from '@/lib/dashboard/data.server';
 import { json, logFailure, readJson } from '@/lib/http';
 import { cleanMessage, isUuid, typingActive } from '@/lib/human/messages';
-import { claimConversation, modeOf, touchOpenHuman } from '@/lib/human/server';
-import { restInsert } from '@/lib/supabase.server';
+import { addHumanMessage, claimConversation, lifecycleRefusal, modeOf } from '@/lib/human/server';
 
 /** Staff side of the chat: read the conversation (polled), and reply. Staff only; agents see the working queue. */
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -65,23 +64,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     // Writing to an unassigned conversation takes it. A lost race is reported, not overwritten.
     if (!row.assigned_staff_id) {
-      const outcome = await claimConversation(user, id, row);
-      if (outcome === 'taken' && user.role !== 'support_admin') return json({ error: 'taken' }, 409);
-      if (outcome === 'not-open') return json({ error: 'not-open' }, 409);
+      const claim = await claimConversation(user.id, id);
+      if (claim.outcome === 'not-found' || claim.outcome === 'not-authorized') return lifecycleRefusal(claim);
+      if (claim.outcome === 'taken' && user.role !== 'support_admin') return json({ error: 'taken' }, 409);
+      if (claim.outcome === 'not-open') return json({ error: 'not-open' }, 409);
     }
-    const open = await touchOpenHuman(id, { staff_typing_at: null, last_staff_message_at: new Date().toISOString() });
-    if (!open) return json({ error: 'not-open' }, 409);
-    await restInsert(
-      'conversation_turns',
-      {
-        conversation_id: id,
-        sender: 'staff',
-        body: clean.body,
-        staff_user_id: user.id,
-        ...(clientId ? { client_msg_id: clientId } : {}),
-      },
-      clientId ? { onConflict: 'conversation_id,client_msg_id' } : {},
-    );
+    // One database call checks the chat is still open and stores the message, so a close that wins the race is
+    // never followed by a message; a retry with the same client id is stored once.
+    const sent = await addHumanMessage({ conversationId: id, sender: 'staff', body: clean.body, staffUserId: user.id, clientId });
+    if (sent.outcome === 'closed') return json({ error: 'closed' }, 409);
+    if (sent.outcome === 'not-found') return json({ error: 'not found' }, 404);
     return json({ ok: true }, 201);
   } catch (error) {
     logFailure('staff message failed', error);

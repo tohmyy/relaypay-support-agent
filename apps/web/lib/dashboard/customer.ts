@@ -1,3 +1,4 @@
+import { conversationOutcomeBadge, type Badge } from './badges';
 import { formatDate, formatMoney, statusLabel, statusTone, typeLabel, type StatusTone } from './format';
 
 /**
@@ -55,6 +56,8 @@ export interface ConversationSummary {
   id: string;
   started: string;
   outcome: string;
+  /** The same outcome as a badge (label and tone), so every list shows it the same way. */
+  badge: Badge;
 }
 
 export interface CustomerOverview {
@@ -93,15 +96,7 @@ export function payoutLine(p: PayoutRow): MoneyLine {
 }
 
 export function conversationOutcome(c: Pick<ConversationRow, 'ended_at' | 'final_status'>): string {
-  if (!c.ended_at) return 'In progress';
-  switch (c.final_status) {
-    case 'resolved':
-      return 'Resolved';
-    case 'escalated':
-      return 'Passed to our team';
-    default:
-      return 'Ended';
-  }
+  return conversationOutcomeBadge(c, 'customer').label;
 }
 
 function card<T>(rows: T[], describe: (row: T) => string): OverviewCard {
@@ -135,6 +130,11 @@ export function buildCustomerOverview(input: {
     conversations: [...input.conversations]
       .sort(byDateDesc((c) => c.started_at))
       .slice(0, 5)
-      .map((c) => ({ id: c.conversation_id, started: formatDate(c.started_at), outcome: conversationOutcome(c) })),
+      .map((c) => ({
+        id: c.conversation_id,
+        started: formatDate(c.started_at),
+        outcome: conversationOutcome(c),
+        badge: conversationOutcomeBadge(c, 'customer'),
+      })),
   };
 }

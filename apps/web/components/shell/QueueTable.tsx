@@ -1,17 +1,9 @@
 import Link from 'next/link';
 import { formatWait } from '@/lib/human/notify';
-import { formatUsd, type QueueItem, type QueueState } from '@/lib/dashboard/staff';
-import type { StatusTone } from '@/lib/dashboard/format';
+import { formatUsd, type QueueItem } from '@/lib/dashboard/staff';
+import { queueStateBadge } from '@/lib/dashboard/badges';
 import { STAFF_COPY } from '@/lib/shell-copy';
 import { DataTable, EmptyState, StatusBadge } from './ui';
-
-const TONES: Record<QueueState, StatusTone> = {
-  escalated: 'danger',
-  waiting: 'warning',
-  'in-progress': 'neutral',
-  open: 'neutral',
-  resolved: 'success',
-};
 
 /** Conversations as a table; the customer cell links to the conversation page. Unread chats say so in words. */
 export default function QueueTable({ items, caption, now }: { items: QueueItem[]; caption: string; now?: number }) {
@@ -36,7 +28,7 @@ export default function QueueTable({ items, caption, now }: { items: QueueItem[]
         {
           header: copy.status,
           cell: (i) => (
-            <StatusBadge tone={TONES[i.state]}>
+            <StatusBadge tone={queueStateBadge(i.state).tone}>
               {i.statusLabel}
               {i.assignedToMe ? ` · ${STAFF_COPY.queue.mine}` : ''}
             </StatusBadge>

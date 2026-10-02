@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Card, EmptyState, PageTitle } from '@/components/shell/ui';
+import { Card, EmptyState, PageTitle, StatusBadge } from '@/components/shell/ui';
 import { requireCustomer } from '@/lib/auth/dal';
 import { getCustomerConversations } from '@/lib/dashboard/data.server';
 import { buildHistoryPage, HISTORY_PAGE_SIZE, parsePage } from '@/lib/dashboard/history';
@@ -33,7 +33,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
                   className="flex min-h-11 items-center justify-between gap-3 py-2 text-sm hover:text-primary"
                 >
                   <span>{c.started}</span>
-                  <span className="text-ink-secondary">{c.outcome}</span>
+                  <StatusBadge badge={c.badge} />
                 </Link>
               </li>
             ))}

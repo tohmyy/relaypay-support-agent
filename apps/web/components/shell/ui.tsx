@@ -1,14 +1,8 @@
 import type { ReactNode } from 'react';
-import type { StatusTone } from '@/lib/dashboard/format';
 
 /** Small building blocks for the signed-in pages: flat cards, a status badge and a plain accessible table. */
 
-const TONES: Record<StatusTone, string> = {
-  success: 'bg-success-soft text-success',
-  neutral: 'bg-surface-subtle text-ink-secondary',
-  warning: 'bg-surface-subtle text-warning',
-  danger: 'bg-danger-soft text-danger',
-};
+export { StatusBadge } from './StatusBadge';
 
 export function PageTitle({ children, sub }: { children: ReactNode; sub?: string }) {
   return (
@@ -26,10 +20,6 @@ export function Card({ title, children, className = '' }: { title?: string; chil
       {children}
     </section>
   );
-}
-
-export function StatusBadge({ tone, children }: { tone: StatusTone; children: ReactNode }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${TONES[tone]}`}>{children}</span>;
 }
 
 export function Stat({ label, value, note }: { label: string; value: ReactNode; note?: string | null }) {

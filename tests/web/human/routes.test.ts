@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   restInsert: vi.fn(),
   restPatch: vi.fn(),
+  restRpc: vi.fn(),
   restSelect: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock('@/lib/auth/rate-limit', () => ({
 vi.mock('@/lib/supabase.server', () => ({
   restInsert: (...a: unknown[]) => h.restInsert(...a),
   restPatch: (...a: unknown[]) => h.restPatch(...a),
+  restRpc: (...a: unknown[]) => h.restRpc(...a),
   restSelect: (...a: unknown[]) => h.restSelect(...a),
 }));
 
@@ -87,6 +89,14 @@ beforeEach(() => {
   h.rateLimit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0, shared: true });
   h.restInsert.mockResolvedValue(undefined);
   h.restPatch.mockResolvedValue([{ conversation_id: 'vapi_abc' }]);
+  h.restRpc.mockImplementation(async (name: string) => {
+    if (name === 'add_human_message') return { outcome: 'ok' };
+    if (name === 'staff_claim_escalation') return { outcome: 'claimed', state: null };
+    if (name === 'staff_release_escalation') return { outcome: 'released', state: null };
+    if (name === 'staff_close_escalation') return { outcome: 'closed', state: null };
+    if (name === 'customer_end_escalation') return { outcome: 'ended', state: null };
+    throw new Error(`unexpected RPC ${name}`);
+  });
   h.getHumanMessages.mockResolvedValue([]);
   h.getStaffProfiles.mockResolvedValue(new Map());
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -139,23 +149,26 @@ describe('customer messages', () => {
     expect(h.getHumanMessages).not.toHaveBeenCalled();
   });
 
-  it('stores a message only while the conversation is open, using the gate write first', async () => {
+  it('stores a message atomically only while the conversation is open', async () => {
     h.getCurrentUser.mockResolvedValue(user());
     h.getConversation.mockResolvedValue(humanRow());
     const res = await post(customerPost, { body: '  Hello?  ' });
     expect(res.status).toBe(201);
-    expect(h.restPatch.mock.calls[0][1]).toBe('conversation_id=eq.vapi_abc&support_mode=eq.human&ended_at=is.null');
-    expect(h.restInsert).toHaveBeenCalledWith('conversation_turns', { conversation_id: 'vapi_abc', sender: 'customer', body: 'Hello?' }, {});
-    const patchOrder = h.restPatch.mock.invocationCallOrder[0];
-    expect(patchOrder).toBeLessThan(h.restInsert.mock.invocationCallOrder[0]);
+    expect(h.restRpc).toHaveBeenCalledWith('add_human_message', {
+      p_conversation_id: 'vapi_abc',
+      p_sender: 'customer',
+      p_body: 'Hello?',
+      p_staff_user_id: null,
+      p_client_msg_id: null,
+    });
   });
 
   it('stores nothing if the conversation was closed in between', async () => {
     h.getCurrentUser.mockResolvedValue(user());
     h.getConversation.mockResolvedValue(humanRow());
-    h.restPatch.mockResolvedValue([]);
+    h.restRpc.mockResolvedValue({ outcome: 'closed' });
     expect((await post(customerPost, { body: 'late' })).status).toBe(409);
-    expect(h.restInsert).not.toHaveBeenCalled();
+    expect(h.restRpc).toHaveBeenCalledOnce();
   });
 
   it('refuses closed conversations, other customers, bad bodies, other sites and floods', async () => {
@@ -177,7 +190,7 @@ describe('customer messages', () => {
     const limited = await post(customerPost, { body: 'x' });
     expect(limited.status).toBe(429);
     expect(limited.headers.get('retry-after')).toBe('12');
-    expect(h.restInsert).not.toHaveBeenCalled();
+    expect(h.restRpc).not.toHaveBeenCalled();
   });
 
   it('reports a database failure without detail', async () => {
@@ -240,50 +253,53 @@ describe('staff messages', () => {
     h.getConversation.mockResolvedValue(humanRow());
     const res = await post(staffPost, { body: 'Hi Amara, I am looking at this now.' });
     expect(res.status).toBe(201);
-    const queries = h.restPatch.mock.calls.map((c) => c[1] as string);
-    expect(queries[0]).toContain('assigned_staff_id=is.null');
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ assigned_staff_id: 'u-9' });
-    // The "joined" note, then the message with the writer's id.
-    expect(h.restInsert.mock.calls[0][1]).toMatchObject({ sender: 'system', body: expect.stringContaining('Sarah Adeyemi, Support Specialist, has joined') });
-    expect(h.restInsert.mock.calls[1][1]).toEqual({
-      conversation_id: 'vapi_abc',
-      sender: 'staff',
-      body: 'Hi Amara, I am looking at this now.',
-      staff_user_id: 'u-9',
-    });
+    expect(h.restRpc.mock.calls).toEqual([
+      ['staff_claim_escalation', { p_conversation_id: 'vapi_abc', p_staff_id: 'u-9' }],
+      ['add_human_message', {
+        p_conversation_id: 'vapi_abc',
+        p_sender: 'staff',
+        p_body: 'Hi Amara, I am looking at this now.',
+        p_staff_user_id: 'u-9',
+        p_client_msg_id: null,
+      }],
+    ]);
   });
 
-  it('does not take or join again for the person who already has it', async () => {
+  it('does not claim again for the person who already has it', async () => {
     h.getCurrentUser.mockResolvedValue(sarah);
     h.getConversation.mockResolvedValue(humanRow({ assigned_staff_id: 'u-9' }));
     expect((await post(staffPost, { body: 'More' })).status).toBe(201);
-    expect(h.restInsert).toHaveBeenCalledTimes(1);
-    expect(h.restInsert.mock.calls[0][1]).toMatchObject({ sender: 'staff' });
+    expect(h.restRpc).toHaveBeenCalledTimes(1);
+    expect(h.restRpc).toHaveBeenCalledWith('add_human_message', {
+      p_conversation_id: 'vapi_abc',
+      p_sender: 'staff',
+      p_body: 'More',
+      p_staff_user_id: 'u-9',
+      p_client_msg_id: null,
+    });
   });
 
   it('refuses a different agent, lets an admin in, and reports a lost race', async () => {
     h.getCurrentUser.mockResolvedValue(david);
     h.getConversation.mockResolvedValue(humanRow({ assigned_staff_id: 'u-9' }));
     expect(await (await post(staffPost, { body: 'x' })).json()).toEqual({ error: 'taken' });
-    expect(h.restInsert).not.toHaveBeenCalled();
+    expect(h.restRpc).not.toHaveBeenCalled();
 
     h.getCurrentUser.mockResolvedValue(admin);
     expect((await post(staffPost, { body: 'x' })).status).toBe(201);
 
-    // Both read "unassigned"; the conditional write only lets one win.
+    // Both read "unassigned"; the lifecycle RPC only lets one win.
     h.getCurrentUser.mockResolvedValue(david);
-    h.restInsert.mockClear();
+    h.restRpc.mockReset();
     h.getConversation.mockResolvedValue(humanRow());
-    h.restPatch.mockResolvedValueOnce([]);
-    h.restSelect.mockResolvedValueOnce([{ assigned_staff_id: 'u-9', support_mode: 'human', ended_at: null }]);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'taken', state: { assigned_staff_id: 'u-9' } });
     const lost = await post(staffPost, { body: 'x' });
     expect(lost.status).toBe(409);
     expect(await lost.json()).toEqual({ error: 'taken' });
-    expect(h.restInsert).not.toHaveBeenCalled();
+    expect(h.restRpc).toHaveBeenCalledTimes(1);
 
     // Lost because it was closed in the meantime: not "taken".
-    h.restPatch.mockResolvedValueOnce([]);
-    h.restSelect.mockResolvedValueOnce([{ assigned_staff_id: null, support_mode: 'ended', ended_at: 'x' }]);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ended', ended_at: 'x' } });
     expect(await (await post(staffPost, { body: 'x' })).json()).toEqual({ error: 'not-open' });
   });
 
@@ -303,15 +319,16 @@ describe('staff messages', () => {
     h.getConversation.mockResolvedValue(humanRow());
     expect(await (await post(claim)).json()).toEqual({ assigned: true });
     h.getConversation.mockResolvedValue(humanRow({ assigned_staff_id: 'u-9' }));
+    h.restRpc.mockResolvedValueOnce({ outcome: 'already-mine', state: null });
     expect((await post(claim)).status).toBe(200);
     h.getCurrentUser.mockResolvedValue(david);
-    h.restPatch.mockResolvedValue([]);
-    h.restSelect.mockResolvedValue([{ assigned_staff_id: 'u-9', support_mode: 'human', ended_at: null }]);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'taken', state: { assigned_staff_id: 'u-9' } });
     const taken = await post(claim);
     expect(taken.status).toBe(409);
-    expect(await taken.json()).toEqual({ error: 'taken' });
+    expect(await taken.json()).toMatchObject({ error: 'taken', state: { assigned_staff_id: 'u-9' } });
     h.getConversation.mockResolvedValue(humanRow({ support_mode: 'ended', ended_at: 'x' }));
-    expect(await (await post(claim)).json()).toEqual({ error: 'not-open' });
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ended' } });
+    expect(await (await post(claim)).json()).toMatchObject({ error: 'not-open', state: { support_mode: 'ended' } });
   });
 
   it('close: ends it as human-closed, once, by the right person', async () => {
@@ -319,23 +336,20 @@ describe('staff messages', () => {
     h.getConversation.mockResolvedValue(humanRow({ assigned_staff_id: 'u-9' }));
     const res = await post(close);
     expect(res.status).toBe(200);
-    expect(h.restPatch.mock.calls[0][1]).toBe('conversation_id=eq.vapi_abc&support_mode=eq.human&ended_at=is.null');
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ support_mode: 'ended', end_reason: 'human-closed', ended_at: expect.any(String) });
-    expect(h.restPatch.mock.calls[0][2]).not.toHaveProperty('final_status');
-    expect(h.restInsert.mock.calls.map((c) => (c[1] as { sender?: string; event_type?: string }).sender ?? (c[1] as { event_type?: string }).event_type)).toEqual([
-      'system',
-      'human_closed',
-    ]);
+    expect(h.restRpc).toHaveBeenCalledWith('staff_close_escalation', {
+      p_conversation_id: 'vapi_abc',
+      p_staff_id: 'u-9',
+    });
 
     // Someone else's conversation: refused. An admin may. A second close changes nothing.
     h.getCurrentUser.mockResolvedValue(david);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'taken', state: { assigned_staff_id: 'u-9' } });
     expect((await post(close)).status).toBe(409);
     h.getCurrentUser.mockResolvedValue(admin);
-    h.restPatch.mockResolvedValue([]);
-    h.restInsert.mockClear();
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ended' } });
     expect((await post(close)).status).toBe(409);
-    expect(h.restInsert).not.toHaveBeenCalled();
     h.getConversation.mockResolvedValue(humanRow({ support_mode: 'ai' }));
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ai' } });
     expect((await post(close)).status).toBe(409);
   });
 

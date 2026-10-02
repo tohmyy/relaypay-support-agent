@@ -1,9 +1,14 @@
 import 'server-only';
 import { SUPPORT_MODES, type SupportMode } from '@/lib/conversation-state';
-import { restInsert, restPatch, restSelect } from '@/lib/supabase.server';
-import type { CurrentUser } from '@/lib/auth/dal';
+import { json } from '@/lib/http';
+import { restPatch, restRpc } from '@/lib/supabase.server';
 
-/** Shared by the customer and staff routes. Each helper is one conditional write, so a race has exactly one winner. */
+/**
+ * Shared by the customer and staff routes. Every change of who has a conversation, and of its ticket and escalation, is
+ * one database function (supabase/migrations/20261007000017_ticket_escalation_ownership.sql): it locks the conversation,
+ * checks the current state, changes conversation, ticket and escalation together, and writes the note the customer sees
+ * and one event. A stale or repeated action changes nothing and gets the current state back, so a race has one winner.
+ */
 export const modeOf = (mode: string | null | undefined): SupportMode =>
   SUPPORT_MODES.find((m) => m === mode) ?? 'ai';
 
@@ -11,13 +16,9 @@ const eq = (value: string) => `eq.${encodeURIComponent(value)}`;
 /** Matches a conversation only while it is with a specialist and still open. */
 const openHuman = (id: string) => `conversation_id=${eq(id)}&support_mode=eq.human&ended_at=is.null`;
 
-export async function addSystemMessage(conversationId: string, body: string): Promise<void> {
-  await restInsert('conversation_turns', { conversation_id: conversationId, sender: 'system', body });
-}
-
 /**
- * Bumps activity on an open human conversation and says whether it was still open. Used as the gate before storing
- * a message, so nothing is written to a conversation that was closed a moment ago.
+ * Bumps activity on an open human conversation and says whether it was still open. Used for the typing signals and the
+ * customer's message gate; nothing is written to a conversation that was closed a moment ago.
  */
 export async function touchOpenHuman(
   conversationId: string,
@@ -41,49 +42,72 @@ export async function markRead(conversationId: string, side: 'customer' | 'staff
   );
 }
 
-/** Ends a chat that is still open (conditional, so only one request can end it). True if this call ended it. */
-export async function endOpenChat(conversationId: string, endReason: 'user-ended' | 'human-closed'): Promise<boolean> {
-  const now = new Date().toISOString();
-  const closed = await restPatch('conversations', openHuman(conversationId), {
-    support_mode: 'ended',
-    ended_at: now,
-    end_reason: endReason,
-    last_activity_at: now,
-    staff_typing_at: null,
-    customer_typing_at: null,
-  });
-  return closed.length > 0;
+/** The conversation, ticket and escalation as the database function saw them after (or instead of) the change. */
+export interface LifecycleState {
+  support_mode: string | null;
+  assigned_staff_id: string | null;
+  ended_at: string | null;
+  end_reason: string | null;
+  final_status: string | null;
+  ticket_id: string | null;
+  ticket_status: string | null;
+  escalation_id: string | null;
+  escalation_status: string | null;
 }
 
-export type ClaimOutcome = 'claimed' | 'already-mine' | 'taken' | 'not-open';
+export interface LifecycleResult<O extends string> {
+  outcome: O;
+  /** Null when the conversation does not exist. */
+  state: LifecycleState | null;
+}
+
+export type ClaimOutcome = 'claimed' | 'already-mine' | 'taken' | 'not-open' | 'not-found' | 'not-authorized';
+export type ReleaseOutcome = 'released' | 'not-assigned' | 'taken' | 'not-open' | 'not-found' | 'not-authorized';
+export type CloseOutcome = 'closed' | 'taken' | 'not-open' | 'not-found' | 'not-authorized';
+export type EndOutcome = 'ended' | 'not-open' | 'not-found';
+export type MessageOutcome = 'ok' | 'duplicate' | 'closed' | 'not-found';
 
 /**
- * Takes an unassigned conversation. Conditional on nobody having it, so two staff members clicking at once give one
- * winner. The customer sees a short "joined" note.
+ * The answer for an action that did not happen: 404 for a conversation that is not there, 403 for someone who may not act,
+ * otherwise 409 with the reason and the current state, so the screen can show what is true now instead of guessing.
  */
-export async function claimConversation(
-  user: Pick<CurrentUser, 'id' | 'displayName' | 'title'>,
-  conversationId: string,
-  current: { assigned_staff_id: string | null; support_mode: string | null; ended_at: string | null },
-): Promise<ClaimOutcome> {
-  if (current.support_mode !== 'human' || current.ended_at) return 'not-open';
-  if (current.assigned_staff_id === user.id) return 'already-mine';
-  const won = await restPatch('conversations', `${openHuman(conversationId)}&assigned_staff_id=is.null`, {
-    assigned_staff_id: user.id,
-    last_activity_at: new Date().toISOString(),
-  });
-  if (won.length === 0) {
-    // Lost the race, or it was closed: look again to say which.
-    const [now] = await restSelect<{ assigned_staff_id: string | null; support_mode: string | null; ended_at: string | null }>(
-      'conversations',
-      `select=assigned_staff_id,support_mode,ended_at&conversation_id=${eq(conversationId)}&limit=1`,
-    );
-    if (!now || now.support_mode !== 'human' || now.ended_at) return 'not-open';
-    return now.assigned_staff_id === user.id ? 'already-mine' : 'taken';
-  }
-  await addSystemMessage(
-    conversationId,
-    `${user.displayName}${user.title ? `, ${user.title},` : ''} has joined the conversation.`,
-  );
-  return 'claimed';
+export function lifecycleRefusal(result: LifecycleResult<string>): Response {
+  if (result.outcome === 'not-found') return json({ error: 'not found' }, 404);
+  if (result.outcome === 'not-authorized') return json({ error: 'forbidden' }, 403);
+  return json({ error: result.outcome, state: result.state }, 409);
 }
+
+/** Takes an unassigned conversation (two people clicking at once give one winner). Joined note and event included. */
+export const claimConversation = (staffId: string, conversationId: string) =>
+  restRpc<LifecycleResult<ClaimOutcome>>('staff_claim_escalation', { p_conversation_id: conversationId, p_staff_id: staffId });
+
+/** Gives a conversation back to the queue: the person who has it, or an admin. */
+export const releaseConversation = (staffId: string, conversationId: string) =>
+  restRpc<LifecycleResult<ReleaseOutcome>>('staff_release_escalation', { p_conversation_id: conversationId, p_staff_id: staffId });
+
+/** Closes conversation, ticket and escalation together. `final_status` keeps the assistant's outcome. */
+export const closeConversation = (staffId: string, conversationId: string) =>
+  restRpc<LifecycleResult<CloseOutcome>>('staff_close_escalation', { p_conversation_id: conversationId, p_staff_id: staffId });
+
+/** The customer ends their own open chat; the ticket and escalation close with it. Anyone else's: `not-found`. */
+export const endConversationAsCustomer = (customerId: string, conversationId: string) =>
+  restRpc<LifecycleResult<EndOutcome>>('customer_end_escalation', { p_conversation_id: conversationId, p_customer_id: customerId });
+
+/**
+ * Stores a message only while the chat is open. The database locks the conversation, so a close that wins the race makes
+ * the message come back `closed` instead of landing after it; a retry with the same client id is `duplicate`.
+ */
+export const addHumanMessage = (message: {
+  conversationId: string;
+  sender: 'customer' | 'staff';
+  body: string;
+  staffUserId?: string | null;
+  clientId?: string | null;
+}) =>
+  restRpc<{ outcome: MessageOutcome }>('add_human_message', {
+    p_conversation_id: message.conversationId,
+    p_sender: message.sender,
+    p_body: message.body,
+    p_staff_user_id: message.staffUserId ?? null,
+    p_client_msg_id: message.clientId ?? null,
+  });
