@@ -1,15 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useChatThread, type SendError, type ThreadMeta } from '@/hooks/useChatThread';
+import { useTabTitle } from '@/hooks/useAttention';
+import { formatWait, waitedLongEnough } from '@/lib/human/notify';
 import type { MessageAuthor } from '@/lib/human/messages';
 import { SHELL_COPY } from '@/lib/shell-copy';
+import ChatLog from './ChatLog';
 import Composer from './Composer';
 
 interface CustomerThreadMeta extends ThreadMeta {
   staff: MessageAuthor | null;
   staffTyping: boolean;
+  staffReadAt: string | null;
+  waitingSince: string | null;
+  staffOnline: boolean;
+  /** False when an administrator has switched callbacks off. */
+  callbackAvailable?: boolean;
 }
 
 const ERRORS: Record<SendError, string> = {
@@ -32,27 +40,75 @@ function Avatar({ author }: { author: MessageAuthor }) {
   );
 }
 
+/** The current time, refreshed every so often, so "waiting for 3 minutes" stays true without a poll. */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
+
 /**
  * The customer's text chat with a support specialist, after the voice call has handed over. A structured transcript
- * (not chat bubbles), the specialist's name and title, a typing line, and a message box. It never takes focus by
- * itself and it carries no landmark of its own, so it can sit in a page, a panel or (later) a widget.
+ * (not chat bubbles), the specialist's name and title, what is happening while they wait (and a way to ask for a callback
+ * instead), a typing line, and a message box. It never takes focus by itself and it carries no landmark of its own, so
+ * it can sit in a page, a panel or (later) a widget.
  */
 export default function HumanSupport({ conversationId }: { conversationId: string }) {
   const base = `/api/support/conversations/${encodeURIComponent(conversationId)}`;
-  const chat = useChatThread<CustomerThreadMeta>({ messagesUrl: `${base}/messages`, typingUrl: `${base}/typing` });
+  const chat = useChatThread<CustomerThreadMeta>({
+    messagesUrl: `${base}/messages`,
+    typingUrl: `${base}/typing`,
+    readUrl: `${base}/read`,
+    me: 'customer',
+    otherReadAt: (m) => (m as CustomerThreadMeta | null)?.staffReadAt,
+  });
   const copy = SHELL_COPY.human;
   const meta = chat.meta;
-  const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended';
+  const [closedByYou, setClosedByYou] = useState<'ended' | 'callback' | null>(null);
+  const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended' || closedByYou !== null;
   const staff = meta?.staff ?? null;
+  const now = useNow(15_000);
 
-  const log = useRef<HTMLOListElement>(null);
-  const stick = useRef(true);
-  useEffect(() => {
-    const el = log.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [chat.messages.length]);
+  const [panel, setPanel] = useState<'none' | 'callback' | 'end'>('none');
+  const [callbackTime, setCallbackTime] = useState('');
+  const [working, setWorking] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useTabTitle(chat.unseenIncoming);
 
   const typingText = meta?.staffTyping ? (staff ? copy.typing.replace('{name}', staff.name) : copy.typingGeneric) : '';
+  const incomingText = chat.incoming
+    ? chat.incoming.author
+      ? copy.newMessage.replace('{name}', chat.incoming.author.name)
+      : copy.newMessageGeneric
+    : '';
+
+  const waiting = !closed && !staff && Boolean(meta);
+  const longWait = waiting && waitedLongEnough(meta?.waitingSince, now);
+  const callbackOk = meta?.callbackAvailable !== false;
+
+  async function act(path: 'end' | 'callback') {
+    setWorking(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${base}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(path === 'callback' ? { preferredTime: callbackTime } : {}),
+      });
+      if (!res.ok && res.status !== 409) throw new Error(String(res.status));
+      setClosedByYou(path === 'end' ? 'ended' : 'callback');
+      setPanel('none');
+      void chat.refresh();
+    } catch {
+      setActionError(path === 'end' ? copy.endFailed : copy.callbackFailed);
+    } finally {
+      setWorking(false);
+    }
+  }
 
   return (
     <section aria-labelledby="human-heading" className="rounded-lg border border-line bg-surface p-4 shadow-card sm:p-6">
@@ -68,58 +124,140 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
           </div>
         </div>
       ) : (
-        !closed && <p className="mt-2 text-sm text-ink-secondary">{copy.waiting}</p>
+        waiting && (
+          <div className="mt-2 text-sm text-ink-secondary">
+            <p>{meta?.staffOnline ? copy.waitingOnline : callbackOk ? copy.waitingOffline : copy.waitingOfflineNoCallback}</p>
+            {meta?.waitingSince && <p className="mt-1 text-ink-muted">{copy.waited.replace('{time}', formatWait(meta.waitingSince, now))}</p>}
+            {longWait && <p className="mt-1 font-medium text-ink">{callbackOk ? copy.stillWaiting : copy.stillWaitingNoCallback}</p>}
+          </div>
+        )
       )}
 
-      <ol
-        ref={log}
-        role="log"
-        aria-label={copy.logLabel}
-        aria-live="off"
-        tabIndex={0}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      <ChatLog
+        messages={chat.messages}
+        me="customer"
+        label={copy.logLabel}
+        labels={{
+          you: copy.labelYou,
+          other: (m) => m.author?.name ?? copy.labelSpecialist,
+          sending: copy.sendingLabel,
+          notSent: copy.notSent,
+          retry: copy.retry,
+          remove: copy.remove,
+          seen: copy.seen,
         }}
-        className="mt-4 max-h-96 min-h-32 space-y-3 overflow-y-auto"
-      >
-        {chat.messages.map((m) => (
-          <li key={m.id} className={m.sender === 'system' ? 'text-sm text-ink-muted' : 'text-sm text-ink'}>
-            {m.sender !== 'system' && (
-              <p className="text-xs font-medium text-ink-secondary">
-                {m.sender === 'customer' ? copy.labelYou : (m.author?.name ?? copy.labelSpecialist)}
-              </p>
-            )}
-            <p className="whitespace-pre-wrap">{m.body}</p>
-          </li>
-        ))}
-      </ol>
+        seenMessageId={chat.seenMessageId}
+        onRetry={chat.retry}
+        onDiscard={chat.discard}
+      />
 
       <p role="status" aria-live="polite" className="mt-2 min-h-5 text-sm text-ink-secondary">
-        {typingText}
+        {typingText || incomingText}
       </p>
       {chat.trouble && <p className="mt-1 text-sm text-ink-muted">{copy.trouble}</p>}
 
       {closed ? (
         <div className="mt-4 rounded-md bg-surface-subtle p-4">
           <p className="text-base font-semibold text-ink">{copy.closedTitle}</p>
-          <p className="mt-1 text-sm text-ink-secondary">{copy.closedBody}</p>
+          <p className="mt-1 text-sm text-ink-secondary">{closedByYou === 'callback' ? copy.callbackSent : copy.closedBody}</p>
           <Link href="/dashboard" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">
             {copy.closedAction}
           </Link>
         </div>
       ) : (
-        <Composer
-          label={copy.messageLabel}
-          placeholder={copy.placeholder}
-          sendLabel={copy.send}
-          sendingLabel={copy.sending}
-          sending={chat.sending}
-          errorText={chat.error ? ERRORS[chat.error] : null}
-          tooLongText={copy.tooLong}
-          onSend={(text) => chat.send(text)}
-          onType={chat.signalTyping}
-        />
+        <>
+          <Composer
+            label={copy.messageLabel}
+            placeholder={copy.placeholder}
+            sendLabel={copy.send}
+            sendingLabel={copy.sending}
+            sending={false}
+            errorText={chat.error ? ERRORS[chat.error] : null}
+            tooLongText={copy.tooLong}
+            onSend={(text) => chat.send(text)}
+            onType={chat.signalTyping}
+          />
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {waiting && callbackOk && panel !== 'callback' && (
+              <button
+                type="button"
+                onClick={() => setPanel('callback')}
+                className={`inline-flex min-h-11 items-center rounded-md px-4 text-sm font-medium ${
+                  longWait ? 'bg-primary text-white hover:bg-primary-hover' : 'border border-line bg-surface text-ink hover:bg-surface-subtle'
+                }`}
+              >
+                {copy.callbackInstead}
+              </button>
+            )}
+            {panel !== 'end' && (
+              <button
+                type="button"
+                onClick={() => setPanel('end')}
+                className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:bg-surface-subtle"
+              >
+                {copy.endChat}
+              </button>
+            )}
+          </div>
+
+          {callbackOk && panel === 'callback' && (
+            <div className="mt-3 rounded-md bg-surface-subtle p-4">
+              <p className="text-sm font-semibold text-ink">{copy.callbackTitle}</p>
+              <label htmlFor="callback-time" className="mt-2 block text-sm text-ink-secondary">
+                {copy.callbackTime}
+              </label>
+              <input
+                id="callback-time"
+                value={callbackTime}
+                maxLength={100}
+                onChange={(e) => setCallbackTime(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-ink"
+              />
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  disabled={working}
+                  onClick={() => void act('callback')}
+                  className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+                >
+                  {working ? copy.callbackSending : copy.callbackSend}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPanel('none')}
+                  className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
+                >
+                  {copy.callbackCancel}
+                </button>
+              </div>
+            </div>
+          )}
+          {panel === 'end' && (
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => void act('end')}
+                className="inline-flex min-h-11 items-center rounded-md bg-danger px-4 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {copy.endConfirm}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPanel('none')}
+                className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
+              >
+                {copy.endKeep}
+              </button>
+            </div>
+          )}
+          {actionError && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {actionError}
+            </p>
+          )}
+        </>
       )}
     </section>
   );

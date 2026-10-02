@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { useChatThread, type SendError, type ThreadMeta } from '@/hooks/useChatThread';
+import { formatWait } from '@/lib/human/notify';
 import type { MessageAuthor } from '@/lib/human/messages';
 import { STAFF_COPY } from '@/lib/shell-copy';
+import ChatLog from './ChatLog';
 import Composer from './Composer';
 import { Card } from './ui';
 
@@ -12,6 +14,8 @@ interface StaffThreadMeta extends ThreadMeta {
   assignedToMe: boolean;
   canReply: boolean;
   customerTyping: boolean;
+  customerReadAt: string | null;
+  waitingSince: string | null;
 }
 
 const ERRORS: Record<SendError, string> = {
@@ -23,19 +27,26 @@ const ERRORS: Record<SendError, string> = {
 };
 
 /**
- * The staff side of the text chat: who has the conversation, the messages as they arrive, a reply box, and the two
- * actions (take it, close it). Every action is re-checked on the server, so what shows here is only a convenience.
+ * The staff side of the text chat: who has the conversation, the messages as they arrive (with "Seen" and a retry for
+ * any that did not send), a reply box, and the actions (take it, return it to the queue, close it). Every action is
+ * re-checked on the server, so what shows here is only a convenience.
  */
 export default function StaffChat({ conversationId }: { conversationId: string }) {
   const base = `/api/staff/conversations/${encodeURIComponent(conversationId)}`;
-  const chat = useChatThread<StaffThreadMeta>({ messagesUrl: `${base}/messages`, typingUrl: `${base}/typing` });
+  const chat = useChatThread<StaffThreadMeta>({
+    messagesUrl: `${base}/messages`,
+    typingUrl: `${base}/typing`,
+    readUrl: `${base}/read`,
+    me: 'staff',
+    otherReadAt: (m) => (m as StaffThreadMeta | null)?.customerReadAt,
+  });
   const copy = STAFF_COPY.chat;
   const meta = chat.meta;
   const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended';
-  const [action, setAction] = useState<'idle' | 'working' | 'confirm-close'>('idle');
+  const [action, setAction] = useState<'idle' | 'working' | 'confirm-close' | 'confirm-release'>('idle');
   const [actionError, setActionError] = useState<string | null>(null);
 
-  async function act(path: 'claim' | 'close') {
+  async function act(path: 'claim' | 'close' | 'release') {
     setAction('working');
     setActionError(null);
     try {
@@ -55,7 +66,10 @@ export default function StaffChat({ conversationId }: { conversationId: string }
       ? meta.assignedToMe
         ? copy.assignedToYou
         : copy.assignedTo.replace('{name}', meta.assignedTo.name)
-      : copy.waiting;
+      : `${copy.waiting}${meta?.waitingSince ? ` ${copy.waitingSince.replace('{time}', formatWait(meta.waitingSince))}.` : ''}`;
+
+  const mine = Boolean(meta?.assignedToMe);
+  const incomingText = chat.incoming ? copy.newMessage : '';
 
   return (
     <Card title={copy.title}>
@@ -76,18 +90,25 @@ export default function StaffChat({ conversationId }: { conversationId: string }
         </button>
       )}
 
-      <ol role="log" aria-label={copy.title} aria-live="off" tabIndex={0} className="mt-4 max-h-96 min-h-24 space-y-3 overflow-y-auto">
-        {chat.messages.map((m) => (
-          <li key={m.id} className={m.sender === 'system' ? 'text-sm text-ink-muted' : 'text-sm text-ink'}>
-            <p className="text-xs font-medium text-ink-secondary">
-              {m.sender === 'customer' ? copy.customer : m.sender === 'staff' ? (m.author?.name ?? copy.system) : copy.system}
-            </p>
-            <p className="whitespace-pre-wrap">{m.body}</p>
-          </li>
-        ))}
-      </ol>
+      <ChatLog
+        messages={chat.messages}
+        me="staff"
+        label={copy.title}
+        labels={{
+          you: copy.staffYou,
+          other: (m) => (m.sender === 'customer' ? copy.customer : copy.system),
+          sending: STAFF_COPY.chat.sending,
+          notSent: copy.notSent,
+          retry: copy.retry,
+          remove: copy.remove,
+          seen: copy.seen,
+        }}
+        seenMessageId={chat.seenMessageId}
+        onRetry={chat.retry}
+        onDiscard={chat.discard}
+      />
       <p role="status" aria-live="polite" className="mt-2 min-h-5 text-sm text-ink-secondary">
-        {meta?.customerTyping ? copy.customerTyping : ''}
+        {meta?.customerTyping ? copy.customerTyping : incomingText}
       </p>
       {chat.trouble && <p className="text-sm text-ink-muted">{copy.trouble}</p>}
 
@@ -98,7 +119,7 @@ export default function StaffChat({ conversationId }: { conversationId: string }
               label={copy.replyLabel}
               sendLabel={copy.send}
               sendingLabel={copy.sending}
-              sending={chat.sending}
+              sending={false}
               errorText={chat.error ? ERRORS[chat.error] : null}
               tooLongText={copy.tooLong}
               onSend={(text) => chat.send(text)}
@@ -107,34 +128,49 @@ export default function StaffChat({ conversationId }: { conversationId: string }
           ) : (
             meta.assignedTo && <p className="mt-4 text-sm text-ink-secondary">{copy.notAllowed}</p>
           )}
-          {(meta.canReply || meta.assignedToMe) &&
-            (action === 'confirm-close' ? (
-              <div className="mt-4 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => void act('close')}
-                  className="inline-flex min-h-11 items-center rounded-md bg-danger px-4 text-sm font-semibold text-white"
-                >
-                  {copy.confirmClose}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAction('idle')}
-                  className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
-                >
-                  {copy.cancel}
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                disabled={action === 'working'}
-                onClick={() => setAction('confirm-close')}
-                className="mt-4 inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:bg-surface-subtle disabled:opacity-60"
-              >
-                {copy.close}
-              </button>
-            ))}
+          {(meta.canReply || mine) && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {action === 'confirm-close' || action === 'confirm-release' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void act(action === 'confirm-close' ? 'close' : 'release')}
+                    className="inline-flex min-h-11 items-center rounded-md bg-danger px-4 text-sm font-semibold text-white"
+                  >
+                    {action === 'confirm-close' ? copy.confirmClose : copy.releaseConfirm}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAction('idle')}
+                    className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink"
+                  >
+                    {copy.cancel}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={action === 'working'}
+                    onClick={() => setAction('confirm-close')}
+                    className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:bg-surface-subtle disabled:opacity-60"
+                  >
+                    {copy.close}
+                  </button>
+                  {meta.assignedTo && (
+                    <button
+                      type="button"
+                      disabled={action === 'working'}
+                      onClick={() => setAction('confirm-release')}
+                      className="inline-flex min-h-11 items-center rounded-md border border-line bg-surface px-4 text-sm font-medium text-ink hover:bg-surface-subtle disabled:opacity-60"
+                    >
+                      {copy.release}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
     </Card>

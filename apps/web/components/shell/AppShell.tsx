@@ -21,6 +21,7 @@ export default function AppShell({
   signOutLabel,
   signOut,
   user,
+  headerExtra,
   children,
 }: {
   brand: string;
@@ -31,6 +32,8 @@ export default function AppShell({
   signOutLabel: string;
   signOut: () => Promise<void>;
   user: ShellUser;
+  /** Extra controls shown before the sign-out button (for example staff availability). */
+  headerExtra?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -52,6 +55,7 @@ export default function AppShell({
               <p className="text-sm font-medium text-ink">{user.displayName}</p>
               {user.subtitle && <p className="text-xs text-ink-muted">{user.subtitle}</p>}
             </div>
+            {headerExtra}
             <form action={signOut}>
               <button
                 type="submit"
