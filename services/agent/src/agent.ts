@@ -42,6 +42,10 @@ export interface TurnResult {
   sources: string[];
   toolsUsed: string[];
   escalated: boolean;
+  /** True only when the create_escalation tool actually succeeded in this turn (the trigger for a human handoff). */
+  escalationCreated: boolean;
+  /** A knowledge lookup ran for this turn (counted against the conversation's retrieval budget). */
+  retrieved: boolean;
   /** Number of the stored turn, so timings can be attached to it once the reply has gone out. */
   turnNumber: number;
 }
@@ -60,6 +64,8 @@ export interface AgentDeps {
   mcpToken?: string;
   model?: string;
   systemPrompt?: string;
+  /** Mode B is on: tell the model that, for a signed-in customer, an escalation continues by text with a specialist. */
+  humanHandoff?: boolean;
 }
 
 /** The options for a pre-started agent process for one conversation (same as a cold turn would use). */
@@ -199,6 +205,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       history: history.turns,
       knowledge,
       escalationRaised: history.escalationRaised,
+      humanHandoffAvailable: Boolean(deps.humanHandoff && history.customerId),
     });
 
     // Run the model and watch its tool traffic.
@@ -307,6 +314,8 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       sources: knowledge.map((k) => k.title),
       toolsUsed,
       escalated: guarded.answerType === 'escalation' || escalationCreated,
+      escalationCreated,
+      retrieved: true,
       turnNumber: history.nextTurnNumber,
     };
   }

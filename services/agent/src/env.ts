@@ -20,6 +20,17 @@ const schema = z.object({
   SESSION_WARNING_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(30)),
   SILENCE_TIMEOUT_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(15)),
   SILENCE_COUNTDOWN_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
+  // Human handoff (Mode B): after an escalation, signed-in customers move to a text chat with staff. Off by default.
+  HUMAN_HANDOFF: z.preprocess(blank, z.enum(['0', '1']).default('0')),
+  // Abuse limits (docs/ABUSE.md); 0 turns one off. Defaults are conservative starting points, tuned from real usage.
+  MAX_AGENT_CALLS: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(30)),
+  MAX_TOOL_CALLS: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(50)),
+  MAX_RETRIEVALS: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(30)),
+  MAX_CONCURRENT_SESSIONS: z.preprocess(blank, z.coerce.number().int().min(0).max(20).default(1)),
+  SESSION_RATE_MAX: z.preprocess(blank, z.coerce.number().int().min(0).max(1000).default(8)),
+  SESSION_RATE_WINDOW_SECONDS: z.preprocess(blank, z.coerce.number().int().min(10).max(86400).default(3600)),
+  GLOBAL_SESSION_RATE_MAX: z.preprocess(blank, z.coerce.number().int().min(0).max(100000).default(60)),
+  GLOBAL_SESSION_RATE_WINDOW_SECONDS: z.preprocess(blank, z.coerce.number().int().min(10).max(86400).default(600)),
   // Latency. The acknowledgement is spoken when a reply is still not ready after this long. Pre-starting the agent
   // process per call is off until a measured comparison (docs/PERFORMANCE.md) shows it helps.
   ACK_AFTER_MS: z.preprocess(blank, z.coerce.number().int().min(200).max(30000).default(2500)),

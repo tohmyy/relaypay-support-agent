@@ -3,7 +3,16 @@ import type { TurnResult } from '../agent';
 import { ensureConversation, loadHistory, saveTurn } from '../history';
 import { errorMessage, logEvent } from '../logger';
 import { classifyCompletion, classifyConfirmation } from './completion';
-import { endConversation } from './persist';
+import {
+  activeEarlierSessions,
+  budgetExceeded,
+  countAllSessions,
+  countCustomerSessions,
+  limitsEnabled,
+  loadUsage,
+  lookupIdentity,
+} from './limits';
+import { endConversation, startHandoff } from './persist';
 import {
   type ConversationEndReason,
   DEFAULT_SESSION_CONFIG,
@@ -22,6 +31,11 @@ const PENDING_END_FALLBACK_MS = 10_000;
  * word than a real interruption. Only a rough indicator: it is measured between webhook arrivals.
  */
 const SHORT_INTERRUPT_MS = 500;
+/**
+ * How many turns re-read who the call belongs to while no customer is linked. The link lands a second or two after the
+ * call starts, so a call still unlinked after a few turns is an anonymous one and stops costing a query per turn.
+ */
+const MAX_IDENTITY_CHECKS = 4;
 
 export type TurnDecision =
   | { kind: 'proceed' }
@@ -58,12 +72,29 @@ interface Session {
   /** The once-per-call voice_stats event has been written (or must not be, for a session rebuilt after a restart). */
   statsRecorded: boolean;
   pendingEnd?: { reason: ConversationEndReason; sawSpeech: boolean };
+  /** Who is talking: the AI, or (after a handoff) staff. Human conversations are never answered by the model. */
+  mode: 'ai' | 'human';
+  /** The signed-in customer this call belongs to, once the web app has linked it (it lands after the call starts). */
+  customerId: string | null;
+  /** Work done in this conversation, for the budgets. */
+  agentCalls: number;
+  toolCalls: number;
+  retrievalCalls: number;
+  /** The once-per-session checks (concurrency, creation rate) have run. */
+  sessionChecksDone: boolean;
+  globalCheckDone: boolean;
+  identityChecks: number;
+  /** Waiting for the customer to hear the line that explains the handoff, then the call is hung up. */
+  pendingHandoff?: { reason: HandoffReason; sawSpeech: boolean };
+  pendingHandoffTimer?: ReturnType<typeof setTimeout>;
   silenceTimer?: ReturnType<typeof setTimeout>;
   countdownTimer?: ReturnType<typeof setTimeout>;
   warningTimer?: ReturnType<typeof setTimeout>;
   hardTimer?: ReturnType<typeof setTimeout>;
   pendingEndTimer?: ReturnType<typeof setTimeout>;
 }
+
+type HandoffReason = 'escalation' | 'limit-reached';
 
 function unref(t: ReturnType<typeof setTimeout>) {
   (t as { unref?: () => void }).unref?.();
@@ -148,6 +179,8 @@ export class SessionController {
   }): Promise<TurnDecision> {
     try {
       const s = await this.ensure(input.conversationId, { callId: input.callId });
+      // The AI does not come back after a handoff: a request that still reaches the voice path gets a fixed line.
+      if (s.mode === 'human') return { kind: 'reply', text: SESSION_TEXT.humanActive };
       if (s.ended) return this.reply(s, input.userMessage, SESSION_TEXT.ended);
       if (Date.now() >= s.startedAt + this.config.maxSeconds * 1000) {
         const decision = await this.reply(s, input.userMessage, SESSION_TEXT.timeout);
@@ -186,6 +219,12 @@ export class SessionController {
         s.phase = 'awaiting-confirmation';
         return this.reply(s, input.userMessage, SESSION_TEXT.anythingElse);
       }
+      // Abuse limits last: they only matter when the model is about to run.
+      const blocked = await this.checkLimits(s, input.userMessage);
+      if (blocked) {
+        s.turnInFlight = false;
+        return blocked;
+      }
       return { kind: 'proceed' };
     } catch (error) {
       // Lifecycle control must never block a customer turn.
@@ -198,11 +237,21 @@ export class SessionController {
   }
 
   /** Call after every turn, including failed ones (pass undefined). */
-  afterTurn(conversationId: string, result?: Partial<Pick<TurnResult, 'answerType' | 'escalated'>>) {
+  afterTurn(
+    conversationId: string,
+    result?: Partial<Pick<TurnResult, 'answerType' | 'escalated' | 'escalationCreated' | 'toolsUsed' | 'retrieved'>>,
+  ) {
     const s = this.sessions.get(conversationId);
     if (!s || s.ended) return;
     s.turnInFlight = false;
-    s.formPending = result?.answerType === 'escalation' && !result.escalated;
+    // The contact form is open until the escalation record exists (not merely until the model asks for the details).
+    s.formPending = result?.answerType === 'escalation' && !result.escalationCreated;
+    if (result) {
+      s.agentCalls += 1;
+      s.toolCalls += result.toolsUsed?.length ?? 0;
+      if (result.retrieved) s.retrievalCalls += 1;
+    }
+    if (result?.escalationCreated && this.config.humanHandoff) void this.armHandoff(s, 'escalation');
     // The reply is about to be spoken; the assistant-stopped event restarts the silence timer.
   }
 
@@ -251,19 +300,34 @@ export class SessionController {
 
     let startedAt = Date.now();
     let alreadyEnded = false;
+    let mode: 'ai' | 'human' = 'ai';
+    let customerId: string | null = null;
+    let usage = { agentCalls: 0, toolCalls: 0, retrievalCalls: 0 };
     try {
       const { data, error } = await this.db
         .from('conversations')
-        .select('started_at, ended_at, end_reason')
+        .select('started_at, ended_at, end_reason, support_mode, customer_id')
         .eq('conversation_id', conversationId);
       if (error) throw new Error(error.message);
       const row = data?.[0] as
-        | { started_at?: string | null; ended_at?: string | null; end_reason?: string | null }
+        | {
+            started_at?: string | null;
+            ended_at?: string | null;
+            end_reason?: string | null;
+            support_mode?: string | null;
+            customer_id?: string | null;
+          }
         | undefined;
       if (row?.started_at && Number.isFinite(Date.parse(row.started_at))) {
         startedAt = Date.parse(row.started_at);
       }
-      alreadyEnded = Boolean(row?.ended_at || row?.end_reason);
+      alreadyEnded = Boolean(row?.ended_at || row?.end_reason || row?.support_mode === 'ended');
+      mode = row?.support_mode === 'human' ? 'human' : 'ai';
+      customerId = row?.customer_id ?? null;
+      // A restart must not reset a budget: count what the conversation has already used.
+      if (row && !alreadyEnded && mode === 'ai' && limitsEnabled(this.config.limits)) {
+        usage = await loadUsage(this.db, conversationId);
+      }
     } catch (error) {
       logEvent('warn', 'session rehydrate failed', {
         conversation_id: conversationId,
@@ -279,9 +343,17 @@ export class SessionController {
       conversationId,
       call: { ...call },
       startedAt,
-      phase: alreadyEnded ? 'ended' : 'active',
+      phase: alreadyEnded ? 'ended' : mode === 'human' ? 'human-support' : 'active',
       resumePhase: 'active',
       ended: alreadyEnded,
+      mode,
+      customerId,
+      agentCalls: usage.agentCalls,
+      toolCalls: usage.toolCalls,
+      retrievalCalls: usage.retrievalCalls,
+      sessionChecksDone: false,
+      globalCheckDone: false,
+      identityChecks: 0,
       turnInFlight: false,
       formPending: false,
       assistantSpeaking: false,
@@ -291,10 +363,11 @@ export class SessionController {
       undeliveredReplies: 0,
       silenceWarnings: 0,
       // A session rebuilt after a restart has lost its counts; writing zeros would pass off a gap as "no interruptions".
-      statsRecorded: alreadyEnded,
+      statsRecorded: alreadyEnded || mode === 'human',
     };
     this.sessions.set(conversationId, s);
-    if (!alreadyEnded) {
+    // A human conversation has no time limit and no silence timer: staff and the customer set the pace.
+    if (!alreadyEnded && mode === 'ai') {
       this.scheduleLimits(s);
       this.armSilence(s);
     }
@@ -327,8 +400,13 @@ export class SessionController {
     if (role === 'assistant') {
       s.assistantSpeaking = started;
       if (started && s.pendingEnd) s.pendingEnd.sawSpeech = true;
+      if (started && s.pendingHandoff) s.pendingHandoff.sawSpeech = true;
       if (!started && s.pendingEnd?.sawSpeech) {
         void this.end(s, s.pendingEnd.reason);
+        return;
+      }
+      if (!started && s.pendingHandoff?.sawSpeech) {
+        void this.handoff(s, s.pendingHandoff.reason);
         return;
       }
     } else {
@@ -357,6 +435,7 @@ export class SessionController {
       s.turnInFlight ||
       s.formPending ||
       s.pendingEnd ||
+      s.pendingHandoff ||
       s.assistantSpeaking ||
       s.userSpeaking
     );
@@ -424,6 +503,188 @@ export class SessionController {
     }
   }
 
+  // --- Human handoff and abuse limits ---
+
+  /** Separate from the checks above so the compiler does not assume nothing changed across an await. */
+  private isHuman(s: Session): boolean {
+    return s.mode === 'human';
+  }
+
+  /** Re-read who the conversation belongs to, until the web app's link has landed. */
+  private async refreshIdentity(s: Session) {
+    if (s.customerId) return;
+    try {
+      const identity = await lookupIdentity(this.db, s.conversationId);
+      if (identity?.customerId) s.customerId = identity.customerId;
+      if (identity?.supportMode === 'human') s.mode = 'human';
+    } catch (error) {
+      logEvent('warn', 'session identity lookup failed', {
+        conversation_id: s.conversationId,
+        message: errorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * After an escalation was created: for a signed-in customer, let the confirmation finish playing, then move the
+   * conversation to staff and hang up. Anonymous callers stay on the call (Mode A).
+   */
+  private async armHandoff(s: Session, reason: HandoffReason) {
+    if (s.ended || s.mode === 'human' || s.pendingHandoff) return;
+    await this.refreshIdentity(s);
+    if (!s.customerId || s.ended || this.isHuman(s) || s.pendingHandoff) return;
+    s.pendingHandoff = { reason, sawSpeech: false };
+    s.pendingHandoffTimer = unref(setTimeout(() => void this.handoff(s, reason), PENDING_END_FALLBACK_MS));
+  }
+
+  /** Move the conversation to staff and hang up the call. The conversation itself stays open. */
+  private async handoff(s: Session, reason: HandoffReason) {
+    if (s.ended || s.mode === 'human') return;
+    s.pendingHandoff = undefined;
+    if (s.pendingHandoffTimer) clearTimeout(s.pendingHandoffTimer);
+    s.pendingHandoffTimer = undefined;
+    let applied = false;
+    try {
+      ({ applied } = await startHandoff(this.db, s.conversationId, { reason, notice: SESSION_TEXT.handoffNotice }));
+    } catch (error) {
+      // The call carries on as an AI call rather than being cut off with nowhere to go.
+      logEvent('error', 'session handoff not persisted', {
+        conversation_id: s.conversationId,
+        reason,
+        message: errorMessage(error),
+      });
+      return;
+    }
+    if (!applied) return;
+    s.mode = 'human';
+    s.phase = 'human-support';
+    this.clearTimers(s);
+    await this.recordVoiceStats(s);
+    try {
+      await this.control.endCall(s.call);
+    } catch (error) {
+      logEvent('warn', 'session hang-up failed', {
+        conversation_id: s.conversationId,
+        message: errorMessage(error),
+      });
+    }
+  }
+
+  /** Say a fixed line, then end the call (or hand it to staff) once it has been heard. Persisted like any reply. */
+  private async closeAfterReply(
+    s: Session,
+    userMessage: string,
+    text: string,
+    then: { end: ConversationEndReason } | { handoff: HandoffReason },
+  ): Promise<TurnDecision> {
+    s.phase = 'ending';
+    if ('end' in then) {
+      s.pendingEnd = { reason: then.end, sawSpeech: false };
+      s.pendingEndTimer = unref(setTimeout(() => void this.end(s, then.end), PENDING_END_FALLBACK_MS));
+    } else {
+      s.pendingHandoff = { reason: then.handoff, sawSpeech: false };
+      s.pendingHandoffTimer = unref(setTimeout(() => void this.handoff(s, then.handoff), PENDING_END_FALLBACK_MS));
+    }
+    return this.reply(s, userMessage, text);
+  }
+
+  /**
+   * The abuse checks, run when the model is about to be called. Returns a decision to answer with a fixed line
+   * instead, or nothing to carry on. Enforced here so none of it depends on the browser.
+   */
+  private async checkLimits(s: Session, userMessage: string): Promise<TurnDecision | undefined> {
+    const limits = this.config.limits;
+    if (!limitsEnabled(limits)) return undefined;
+    try {
+      if (!s.customerId && s.identityChecks < MAX_IDENTITY_CHECKS) {
+        s.identityChecks += 1;
+        await this.refreshIdentity(s);
+      }
+      if (this.isHuman(s)) return { kind: 'reply', text: SESSION_TEXT.humanActive };
+
+      const over = budgetExceeded(
+        { agentCalls: s.agentCalls, toolCalls: s.toolCalls, retrievalCalls: s.retrievalCalls },
+        limits,
+      );
+      if (over) {
+        await this.logEvent(s, 'limit_reached', `conversation budget used up (${over.kind})`, {
+          kind: over.kind,
+          limit: over.limit,
+          value: over.value,
+        });
+        if (this.config.humanHandoff && s.customerId) {
+          return this.closeAfterReply(s, userMessage, SESSION_TEXT.budgetHandoff, { handoff: 'limit-reached' });
+        }
+        return this.closeAfterReply(s, userMessage, SESSION_TEXT.budget, { end: 'limit-reached' });
+      }
+
+      // Per-session checks run once, as soon as they can: concurrency and the customer's creation rate need the
+      // customer, so they wait for the link; the global breaker does not.
+      if (!s.sessionChecksDone && (s.customerId || limits.globalSessionRateMax > 0)) {
+        const refused = await this.checkSessionLimits(s);
+        if (refused) return this.closeAfterReply(s, userMessage, refused.text, { end: 'limit-reached' });
+        s.sessionChecksDone = Boolean(s.customerId);
+      }
+    } catch (error) {
+      // A failed check must never cost the customer their turn.
+      logEvent('warn', 'session limit check failed', {
+        conversation_id: s.conversationId,
+        message: errorMessage(error),
+      });
+    }
+    return undefined;
+  }
+
+  private async checkSessionLimits(s: Session): Promise<{ text: string } | undefined> {
+    const limits = this.config.limits;
+    const now = Date.now();
+
+    if (limits.globalSessionRateMax > 0 && !s.globalCheckDone) {
+      s.globalCheckDone = true;
+      const since = new Date(now - limits.globalSessionRateWindowSeconds * 1000).toISOString();
+      const total = await countAllSessions(this.db, since);
+      if (total > limits.globalSessionRateMax) {
+        await this.logEvent(s, 'limit_reached', 'too many new sessions overall', {
+          kind: 'global_session_rate',
+          limit: limits.globalSessionRateMax,
+          value: total,
+        });
+        return { text: SESSION_TEXT.rateLimited };
+      }
+    }
+
+    if (!s.customerId) return undefined;
+
+    if (limits.maxConcurrentSessions > 0) {
+      const earlier = await activeEarlierSessions(this.db, s.customerId, s.conversationId, s.startedAt, {
+        maxSeconds: this.config.maxSeconds,
+        now,
+      });
+      if (earlier.length >= limits.maxConcurrentSessions) {
+        await this.logEvent(s, 'limit_reached', 'customer already has an active session', {
+          kind: 'concurrent_sessions',
+          limit: limits.maxConcurrentSessions,
+          value: earlier.length,
+        });
+        return { text: SESSION_TEXT.concurrent };
+      }
+    }
+
+    if (limits.sessionRateMax > 0) {
+      const since = new Date(now - limits.sessionRateWindowSeconds * 1000).toISOString();
+      const started = await countCustomerSessions(this.db, s.customerId, since);
+      if (started > limits.sessionRateMax) {
+        await this.logEvent(s, 'limit_reached', 'customer started too many sessions', {
+          kind: 'session_rate',
+          limit: limits.sessionRateMax,
+          value: started,
+        });
+        return { text: SESSION_TEXT.rateLimited };
+      }
+    }
+    return undefined;
+  }
+
   /** One row per call with the voice-interaction counts; written once, by whichever end happens first. */
   private async recordVoiceStats(s: Session) {
     if (s.statsRecorded) return;
@@ -437,7 +698,14 @@ export class SessionController {
   }
 
   private clearTimers(s: Session) {
-    for (const key of ['silenceTimer', 'countdownTimer', 'warningTimer', 'hardTimer', 'pendingEndTimer'] as const) {
+    for (const key of [
+      'silenceTimer',
+      'countdownTimer',
+      'warningTimer',
+      'hardTimer',
+      'pendingEndTimer',
+      'pendingHandoffTimer',
+    ] as const) {
       if (s[key]) clearTimeout(s[key]);
       s[key] = undefined;
     }

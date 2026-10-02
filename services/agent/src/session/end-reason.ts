@@ -24,6 +24,7 @@ export function finalStatusFor(
     case 'silence-timeout':
     case 'session-timeout':
     case 'low-confidence':
+    case 'limit-reached':
       return 'abandoned';
     case 'error':
       return 'error';

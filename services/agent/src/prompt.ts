@@ -11,6 +11,8 @@ export interface PromptParts {
   history: HistoryTurn[];
   knowledge: KbResult[];
   escalationRaised: boolean;
+  /** Mode B: after an escalation this customer continues by text with a specialist and the call ends. */
+  humanHandoffAvailable?: boolean;
 }
 
 /** Stops user, document or history text from closing or forging a prompt block. */
@@ -43,6 +45,11 @@ export function buildPrompt(p: PromptParts): string {
   if (p.escalationRaised) {
     blocks.push(
       '<escalation_already_raised>A human handoff was already created on this call. Do not re-diagnose.</escalation_already_raised>',
+    );
+  }
+  if (p.humanHandoffAvailable) {
+    blocks.push(
+      '<human_handoff_available>This customer is signed in. After you create the escalation, tell them a support specialist will continue helping them by text in this same window, that this call is about to end, and that they do not need to do anything. Do not promise a time.</human_handoff_available>',
     );
   }
   blocks.push(`<current_user_message>\n${escapeBlock(p.userMessage)}\n</current_user_message>`);

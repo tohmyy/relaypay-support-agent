@@ -2,6 +2,53 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { finalStatusFor } from './end-reason';
 import type { ConversationEndReason } from './types';
 
+export interface HandoffResult {
+  /** False when the conversation was already handed over, had ended, or does not exist: the first handoff wins. */
+  applied: boolean;
+}
+
+/**
+ * Moves a conversation from the AI to staff: `support_mode` becomes `human`, a system message records it for both
+ * sides, and an event is logged. Nothing is ended: the conversation stays open until staff close it. First-wins and
+ * conditional on the mode still being `ai`, so a repeat (or a racing end) changes nothing.
+ */
+export async function startHandoff(
+  db: SupabaseClient,
+  conversationId: string,
+  opts: { reason: string; notice: string; now?: Date },
+): Promise<HandoffResult> {
+  const found = await db
+    .from('conversations')
+    .select('support_mode, ended_at')
+    .eq('conversation_id', conversationId);
+  fail('load conversation', found.error);
+  const row = found.data?.[0] as { support_mode?: string | null; ended_at?: string | null } | undefined;
+  if (!row || row.ended_at || (row.support_mode ?? 'ai') !== 'ai') return { applied: false };
+
+  const now = (opts.now ?? new Date()).toISOString();
+  const moved = await db
+    .from('conversations')
+    .update({ support_mode: 'human', last_activity_at: now })
+    .eq('conversation_id', conversationId)
+    .eq('support_mode', 'ai');
+  fail('start handoff', moved.error);
+
+  const note = await db.from('conversation_turns').insert({
+    conversation_id: conversationId,
+    sender: 'system',
+    body: opts.notice,
+  });
+  fail('record handoff notice', note.error);
+  const ev = await db.from('conversation_events').insert({
+    conversation_id: conversationId,
+    event_type: 'human_handoff',
+    summary: `moved to a support specialist (${opts.reason})`,
+    metadata: { reason: opts.reason },
+  });
+  fail('record handoff', ev.error);
+  return { applied: true };
+}
+
 export interface EndResult {
   /** False when the conversation already had an end reason; the first reason wins. */
   applied: boolean;
@@ -27,15 +74,27 @@ export async function endConversation(
   const [conv, turns] = await Promise.all([
     db
       .from('conversations')
-      .select('final_status, end_reason, ended_at, started_at')
+      .select('final_status, end_reason, ended_at, started_at, support_mode')
       .eq('conversation_id', conversationId),
     db.from('conversation_turns').select('turn_number').eq('conversation_id', conversationId),
   ]);
   fail('load conversation', conv.error);
   fail('load turns', turns.error);
   const row = conv.data?.[0] as
-    | { final_status?: string | null; end_reason?: string | null; ended_at?: string | null; started_at?: string | null }
+    | {
+        final_status?: string | null;
+        end_reason?: string | null;
+        ended_at?: string | null;
+        started_at?: string | null;
+        support_mode?: string | null;
+      }
     | undefined;
+
+  // A conversation handed to staff stays open after the voice call is hung up: the end-of-call report that follows
+  // must not close it. Only staff closing it (the web app) ends a human conversation.
+  if (row?.support_mode === 'human') {
+    return { applied: false, finalStatus: row.final_status ?? undefined, endReason: null };
+  }
 
   if (row?.end_reason) {
     if (opts.summary) {

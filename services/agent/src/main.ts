@@ -36,7 +36,7 @@ const warm =
 const server = createAgentServer({
   apiToken: env.AGENT_API_TOKEN,
   webhookSecret: env.VAPI_WEBHOOK_SECRET,
-  runTurn: (input) => runTurn(input, { warm }),
+  runTurn: (input) => runTurn(input, { warm, humanHandoff: env.HUMAN_HANDOFF === '1' }),
   db,
   session,
   warm,
@@ -53,6 +53,12 @@ server.listen(env.AGENT_PORT, env.AGENT_HOST, () => {
   );
   console.log(
     `  latency: acknowledgement after ${env.ACK_AFTER_MS}ms, agent pre-warm ${warm ? `on (max ${env.PREWARM_MAX})` : 'off'}`,
+  );
+  console.log(
+    `  human handoff: ${sessionConfig.humanHandoff ? 'on (signed-in customers move to a text chat with staff after an escalation)' : 'off'}`,
+  );
+  console.log(
+    `  abuse limits: ${sessionConfig.limits.maxAgentCalls || 'off'} agent calls, ${sessionConfig.limits.maxToolCalls || 'off'} tool calls, ${sessionConfig.limits.maxRetrievals || 'off'} retrievals per conversation; ${sessionConfig.limits.maxConcurrentSessions || 'off'} concurrent per customer`,
   );
   console.log(
     `  session limits: ${sessionConfig.maxSeconds}s max, silence ${sessionConfig.silenceSeconds}s + ${sessionConfig.countdownSeconds}s countdown`,
