@@ -1,7 +1,8 @@
 import { formatDate } from './format';
 
 /** What the staff queue reads. Customer fields are limited to company and contact; notes and KYC are never selected. */
-export const QUEUE_CONVERSATION_COLUMNS = 'conversation_id,customer_id,started_at,ended_at,final_status,end_reason';
+export const QUEUE_CONVERSATION_COLUMNS =
+  'conversation_id,customer_id,started_at,ended_at,final_status,end_reason,support_mode,assigned_staff_id';
 
 export interface QueueConversationRow {
   conversation_id: string;
@@ -10,6 +11,8 @@ export interface QueueConversationRow {
   ended_at: string | null;
   final_status: string | null;
   end_reason: string | null;
+  support_mode?: string | null;
+  assigned_staff_id?: string | null;
 }
 
 export interface QueueTicketRow {
@@ -26,7 +29,7 @@ export interface QueueCustomerRow {
   contact_name: string | null;
 }
 
-export type QueueState = 'open' | 'waiting' | 'escalated' | 'resolved';
+export type QueueState = 'open' | 'waiting' | 'in-progress' | 'escalated' | 'resolved';
 
 export interface QueueItem {
   conversationId: string;
@@ -39,7 +42,7 @@ export interface QueueItem {
 }
 
 export interface StaffQueue {
-  counts: { open: number; waiting: number; escalated: number; resolvedToday: number };
+  counts: { open: number; waiting: number; inProgress: number; escalated: number; resolvedToday: number };
   items: QueueItem[];
 }
 
@@ -58,17 +61,21 @@ export const issueLabel = (category: string | null | undefined) => ISSUE_LABELS[
 const STATE_LABELS: Record<QueueState, string> = {
   open: 'Open',
   waiting: 'Waiting for staff',
+  'in-progress': 'In progress',
   escalated: 'Escalated',
   resolved: 'Resolved',
 };
 
 /**
- * Open = still in progress. Escalated = handed to staff (the call may have ended) and not yet resolved. Waiting for
- * staff = escalated and the call has ended, so a person needs to pick it up. Assignment and closing arrive with the
- * staff messaging work, so for now "waiting" is the ended-and-escalated case.
+ * With a specialist (`support_mode = human`): waiting until someone takes it, then in progress. Otherwise the call is
+ * still going (open), or it was escalated for a callback without moving to a specialist (escalated: Mode A, which
+ * stays in the queue after the call ends), or it is over (resolved).
  */
-export function queueState(c: Pick<QueueConversationRow, 'ended_at' | 'final_status'>): QueueState {
-  if (c.final_status === 'escalated') return c.ended_at ? 'waiting' : 'escalated';
+export function queueState(
+  c: Pick<QueueConversationRow, 'ended_at' | 'final_status' | 'support_mode' | 'assigned_staff_id'>,
+): QueueState {
+  if (c.support_mode === 'human' && !c.ended_at) return c.assigned_staff_id ? 'in-progress' : 'waiting';
+  if (c.final_status === 'escalated' && c.support_mode !== 'human' && c.support_mode !== 'ended') return 'escalated';
   if (!c.ended_at) return 'open';
   return 'resolved';
 }
@@ -103,15 +110,16 @@ export function buildStaffQueue(
     })
     .sort((a, b) => rank(a.state) - rank(b.state));
 
-  const counts = { open: 0, waiting: 0, escalated: 0, resolvedToday: 0 };
+  const counts = { open: 0, waiting: 0, inProgress: 0, escalated: 0, resolvedToday: 0 };
   for (const c of input.conversations) {
     const state = queueState(c);
     if (state === 'open') counts.open++;
     else if (state === 'waiting') counts.waiting++;
+    else if (state === 'in-progress') counts.inProgress++;
     else if (state === 'escalated') counts.escalated++;
     else if (sameUtcDay(c.ended_at, now)) counts.resolvedToday++;
   }
   return { counts, items };
 }
 
-const rank = (s: QueueState) => ({ escalated: 0, waiting: 1, open: 2, resolved: 3 })[s];
+const rank = (s: QueueState) => ({ waiting: 0, escalated: 1, 'in-progress': 2, open: 3, resolved: 4 })[s];

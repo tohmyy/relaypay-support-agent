@@ -8,9 +8,14 @@ export const END_REASONS = [
   'agent-ended',
   'human-closed',
   'low-confidence',
+  'limit-reached',
   'error',
 ] as const;
 export type PublicEndReason = (typeof END_REASONS)[number];
+
+/** Who is talking: the voice assistant, a support specialist (after a handoff), or nobody (the conversation is closed). */
+export const SUPPORT_MODES = ['ai', 'human', 'ended'] as const;
+export type SupportMode = (typeof SUPPORT_MODES)[number];
 
 /** The only conversation data the browser ever receives. Customer-safe by construction. */
 export interface PublicConversationState {
@@ -20,6 +25,8 @@ export interface PublicConversationState {
   ended: boolean;
   /** Why the session ended, once it has. */
   endReason: PublicEndReason | null;
+  /** `human` once the conversation has moved to a support specialist (the voice call is over, the conversation is not). */
+  supportMode: SupportMode;
   /** When the session started and the server's clock at read time (ISO), so the UI can render the time limit. */
   startedAt: string | null;
   serverTime: string | null;
@@ -37,6 +44,7 @@ export const NEUTRAL_STATE: PublicConversationState = {
   escalation: null,
   ended: false,
   endReason: null,
+  supportMode: 'ai',
   startedAt: null,
   serverTime: null,
   limits: null,
@@ -53,6 +61,8 @@ export interface ConversationRows {
     /** Used by the route to decide who may read a call tied to a customer; never part of the public state. */
     final_status?: string | null;
     customer_id?: string | null;
+    support_mode?: string | null;
+    assigned_staff_id?: string | null;
   }[];
 }
 
@@ -82,6 +92,7 @@ export function toPublicState(
     escalation: escalation ? { requestedTime: escalation.preferred_time?.trim() || null } : null,
     ended: Boolean(conversation?.ended_at),
     endReason: END_REASONS.find((r) => r === conversation?.end_reason) ?? null,
+    supportMode: SUPPORT_MODES.find((m) => m === conversation?.support_mode) ?? 'ai',
     startedAt: isoOrNull(conversation?.started_at),
     serverTime: (context.now ?? new Date()).toISOString(),
     limits: context.limits ?? null,

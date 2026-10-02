@@ -78,3 +78,21 @@ export async function restPatch<T = Record<string, unknown>>(
   if (!res.ok) throw new Error(`${table} update failed (${res.status})`);
   return (await res.json()) as T[];
 }
+
+/**
+ * Calls a Postgres function through PostgREST (service role, server side only). Errors name the function and status
+ * only, never the arguments.
+ */
+export async function restRpc<T = unknown>(fn: string, args: Record<string, unknown>): Promise<T> {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = credentials();
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: headers(SUPABASE_SERVICE_ROLE_KEY, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(args),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`${fn} call failed (${res.status})`);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
+}

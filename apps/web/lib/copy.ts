@@ -106,6 +106,10 @@ export const COPY = {
     warningScreenReader: 'This support session will end in about 30 seconds.',
     endedHeading: 'Session ended',
     endedBodySilence: 'The conversation ended because there was no activity.',
+    activeElsewhere: 'You already have an active support conversation. Please continue in that one.',
+    tooManyConversations: 'You have started several conversations recently. Please try again in a little while.',
+    endedBodyLimit:
+      'This request needs to be continued by a support specialist. You can start a new conversation whenever you need help.',
     endedBodyTimeout: 'This support session reached its time limit.',
     endedNewConversation: 'You can start a new support conversation whenever you need help.',
   },
