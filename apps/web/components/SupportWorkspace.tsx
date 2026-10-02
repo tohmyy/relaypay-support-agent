@@ -37,12 +37,15 @@ export interface WorkspaceProps {
   onEnd(): void;
   /** Types a message into the live call. When absent the text box is not shown. */
   onSendText?(text: string): Promise<boolean>;
+  onTypingChange?(active: boolean): void;
   /** Carry on by typing when voice cannot be used (shown on the microphone errors). */
   onTypeInstead?(): void;
   /** Extra content on the ended screen (resume, rating). */
   endedExtra?: React.ReactNode;
   /** The microphone is muted / the room is loud, when the browser could tell. */
   muted?: boolean;
+  muteFailed?: boolean;
+  onToggleMute?(): void;
   noisy?: boolean;
 }
 
@@ -105,10 +108,10 @@ export default function SupportWorkspace(p: WorkspaceProps) {
           embedded={p.embedded}
           linkStatus={p.linkStatus}
           onStartAnother={p.onStart}
-        >
-          {p.endedExtra}
-        </ConversationComplete>
-        {p.turns.length > 0 && <ConversationPanel turns={p.turns} />}
+        />
+        {(p.turns.length > 0 || p.endedExtra) && (
+          <ConversationPanel turns={p.turns}>{p.endedExtra}</ConversationPanel>
+        )}
       </div>
     );
   }
@@ -129,12 +132,18 @@ export default function SupportWorkspace(p: WorkspaceProps) {
           hasConversation={p.turns.length > 0}
           onStart={p.onStart}
           onEnd={p.onEnd}
+          muted={p.muted}
+          muteFailed={p.muteFailed}
+          onToggleMute={p.onToggleMute}
         />
-        {p.onSendText && LIVE_STATES.includes(state) && <TypedComposer onSend={p.onSendText} />}
       </section>
       <EscalationPanel support={p.support} requestedTime={p.requestedTime} />
       {p.support === 'ticket-created' && <TicketConfirmation reference={p.ticketReference} />}
-      <ConversationPanel turns={p.turns} />
+      <ConversationPanel turns={p.turns}>
+        {p.onSendText && LIVE_STATES.includes(state) && (
+          <TypedComposer onSend={p.onSendText} onTypingChange={p.onTypingChange} />
+        )}
+      </ConversationPanel>
     </div>
   );
 }

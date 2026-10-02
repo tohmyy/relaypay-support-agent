@@ -51,7 +51,13 @@ export default function StaffChat({ conversationId }: { conversationId: string }
     setActionError(null);
     try {
       const res = await fetch(`${base}/${path}`, { method: 'POST' });
-      if (!res.ok) setActionError(res.status === 409 ? copy.taken : copy.sendFailed);
+      if (!res.ok) {
+        // A 409 says why and what is true now: closed, returned to the queue, or taken by someone else.
+        const reason = res.status === 409 ? ((await res.json().catch(() => null)) as { error?: string } | null)?.error : undefined;
+        setActionError(
+          reason === 'not-open' ? copy.closed : reason === 'not-assigned' ? copy.released : res.status === 409 ? copy.taken : copy.sendFailed,
+        );
+      }
     } catch {
       setActionError(copy.sendFailed);
     } finally {

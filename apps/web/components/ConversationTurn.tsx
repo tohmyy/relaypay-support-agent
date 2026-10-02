@@ -17,7 +17,7 @@ export default function ConversationTurn({ turn, isLatestSupport }: { turn: Turn
       } ${turn.final ? '' : 'opacity-80'}`}
     >
       <p className="mb-1 text-xs font-medium text-ink-secondary">{mine ? COPY.conversation.you : COPY.conversation.support}</p>
-      <p className="whitespace-pre-wrap">{turn.text}</p>
+      <p className="whitespace-pre-wrap">{turn.displayText ?? turn.text}</p>
     </li>
   );
 }

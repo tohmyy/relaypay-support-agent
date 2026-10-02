@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ pathname: '/staff' }));
-vi.mock('next/navigation', () => ({ usePathname: () => h.pathname }));
+vi.mock('next/navigation', () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn() }) }));
 
 import HumanSupport from '@/components/shell/HumanSupport';
 import LiveQueue from '@/components/shell/LiveQueue';

@@ -46,21 +46,23 @@ export default function TextConversation({ onUseVoice }: { onUseVoice(): void })
           embedded
           linkStatus="linked"
           onStartAnother={text.restart}
-        >
-          {text.conversationId && <SessionFeedback key={text.conversationId} conversationId={text.conversationId} stage="ai" />}
-        </ConversationComplete>
+        />
       )}
 
       <section aria-label={COPY.conversation.title} className="rounded-lg border border-line bg-surface p-4 shadow-card sm:p-6">
-        <ConversationPanel turns={text.turns} embeddedInCard />
-        {text.sending && (
-          <p role="status" className="mt-2 text-sm text-ink-secondary">
-            {COPY.typed.thinking}
-          </p>
-        )}
-        {!text.ended && (
-          <TypedComposer onSend={text.send} sending={text.sending} error={text.error ? ERRORS[text.error] : null} />
-        )}
+        <ConversationPanel turns={text.turns} embeddedInCard>
+          {text.sending && (
+            <p role="status" className="text-sm text-ink-secondary">
+              {COPY.typed.thinking}
+            </p>
+          )}
+          {!text.ended && (
+            <TypedComposer onSend={text.send} sending={text.sending} error={text.error ? ERRORS[text.error] : null} />
+          )}
+          {text.ended && text.conversationId && (
+            <SessionFeedback key={text.conversationId} conversationId={text.conversationId} stage="ai" />
+          )}
+        </ConversationPanel>
       </section>
     </div>
   );

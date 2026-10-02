@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChatThread, type SendError, type ThreadMeta } from '@/hooks/useChatThread';
-import { useTabTitle } from '@/hooks/useAttention';
+import { useChime, useTabTitle } from '@/hooks/useAttention';
 import { formatWait, waitedLongEnough } from '@/lib/human/notify';
 import type { MessageAuthor } from '@/lib/human/messages';
 import { SHELL_COPY } from '@/lib/shell-copy';
 import ChatLog from './ChatLog';
+import EarlierTranscript from './EarlierTranscript';
 import SessionFeedback from '../SessionFeedback';
 import Composer from './Composer';
 
@@ -73,12 +74,33 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
   const closed = Boolean(meta?.ended) || meta?.supportMode === 'ended' || closedByYou;
   const staff = meta?.staff ?? null;
   const now = useNow(15_000);
+  const { play } = useChime();
+  const chimedJoin = useRef(false);
 
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  useTabTitle(chat.unseenIncoming);
+  useTabTitle(closed ? 1 : chat.unseenIncoming);
+
+  useEffect(() => {
+    if (!staff || chimedJoin.current) return;
+    chimedJoin.current = true;
+    try {
+      play();
+    } catch {
+      // Browsers may refuse sound before a click; a missing chime is not worth an error.
+    }
+  }, [staff, play]);
+
+  useEffect(() => {
+    if (!closed || typeof document === 'undefined') return;
+    const original = document.title;
+    document.title = copy.closedTitle;
+    return () => {
+      document.title = original;
+    };
+  }, [closed, copy.closedTitle]);
 
   const typingText = meta?.staffTyping ? (staff ? copy.typing.replace('{name}', staff.name) : copy.typingGeneric) : '';
   const incomingText = chat.incoming
@@ -117,11 +139,16 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
         {copy.title}
       </h2>
       {staff ? (
-        <div className="mt-3 flex items-center gap-3">
-          <Avatar author={staff} />
-          <div>
-            <p className="text-sm font-medium text-ink">{staff.name}</p>
-            {staff.title && <p className="text-xs text-ink-muted">{staff.title}</p>}
+        <div className="mt-3">
+          <p aria-live="polite" className="rounded-md border border-line bg-accent-soft px-4 py-3 text-sm font-medium text-ink">
+            {copy.joined.replace('{name}', staff.name)}
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            <Avatar author={staff} />
+            <div>
+              <p className="text-sm font-medium text-ink">{staff.name}</p>
+              {staff.title && <p className="text-xs text-ink-muted">{staff.title}</p>}
+            </div>
           </div>
         </div>
       ) : (
@@ -157,8 +184,14 @@ export default function HumanSupport({ conversationId }: { conversationId: strin
       </p>
       {chat.trouble && <p className="mt-1 text-sm text-ink-muted">{copy.trouble}</p>}
 
+      <EarlierTranscript
+        url={`/api/support/conversations/${encodeURIComponent(conversationId)}/transcript`}
+        title={copy.earlierTitle}
+        empty={copy.earlierEmpty}
+      />
+
       {closed ? (
-        <div className="mt-4 rounded-md bg-surface-subtle p-4">
+        <div className="mt-4 rounded-md bg-surface-subtle p-4" role="status" aria-live="polite">
           <p className="text-base font-semibold text-ink">{copy.closedTitle}</p>
           <p className="mt-1 text-sm text-ink-secondary">{copy.closedBody}</p>
           <Link href="/dashboard" className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline">

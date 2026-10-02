@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import type { ThreadMessage } from '@/hooks/useChatThread';
 import type { MessageSender } from '@/lib/human/messages';
+import ChatBubble from './ChatBubble';
 
 export interface ChatLogLabels {
   /** Label for the viewer's own messages. */
@@ -58,30 +59,17 @@ export default function ChatLog({
       }}
       className="mt-4 max-h-96 min-h-32 space-y-3 overflow-y-auto"
     >
-      {messages.map((m) => {
-        const own = m.sender === me;
-        return (
-          <li key={m.id} className={m.sender === 'system' ? 'text-center text-sm text-ink-muted' : 'text-sm text-ink'}>
-            {m.sender !== 'system' && (
-              <p className="text-xs font-medium text-ink-secondary">{own ? labels.you : labels.other(m)}</p>
-            )}
-            <p className={`whitespace-pre-wrap ${m.status === 'sending' ? 'text-ink-secondary' : ''}`}>{m.body}</p>
-            {m.status === 'sending' && <p className="text-xs text-ink-muted">{labels.sending}</p>}
-            {m.status === 'failed' && m.clientId && (
-              <p className="text-xs text-danger">
-                {labels.notSent}{' '}
-                <button type="button" onClick={() => onRetry(m.clientId as string)} className="font-medium underline">
-                  {labels.retry}
-                </button>{' '}
-                <button type="button" onClick={() => onDiscard(m.clientId as string)} className="font-medium underline">
-                  {labels.remove}
-                </button>
-              </p>
-            )}
-            {own && !m.status && m.id === seenMessageId && <p className="text-xs text-ink-muted">{labels.seen}</p>}
-          </li>
-        );
-      })}
+      {messages.map((m) => (
+        <ChatBubble
+          key={m.id}
+          message={m}
+          own={m.sender === me}
+          labels={labels}
+          seen={m.id === seenMessageId}
+          onRetry={onRetry}
+          onDiscard={onDiscard}
+        />
+      ))}
     </ol>
   );
 }

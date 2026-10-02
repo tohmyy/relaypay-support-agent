@@ -12,11 +12,13 @@ export default function TypedComposer({
   sending = false,
   disabled = false,
   error = null,
+  onTypingChange,
 }: {
   onSend(text: string): Promise<boolean>;
   sending?: boolean;
   disabled?: boolean;
   error?: string | null;
+  onTypingChange?: (active: boolean) => void;
 }) {
   const t = COPY.typed;
   return (
@@ -30,6 +32,7 @@ export default function TypedComposer({
       errorText={error}
       tooLongText={t.tooLong}
       onSend={onSend}
+      onTypingChange={onTypingChange}
     />
   );
 }

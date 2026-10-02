@@ -10,7 +10,7 @@ import { MockVoiceClient } from '@/lib/voice/mock-client';
 
 const h = vi.hoisted(() => ({ session: null as unknown }));
 
-vi.mock('next/navigation', () => ({ usePathname: () => '/support' }));
+vi.mock('next/navigation', () => ({ usePathname: () => '/support', useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/components/SupportWorkspace', () => ({ default: () => <div data-testid="workspace" /> }));
 vi.mock('@/components/Header', () => ({ default: () => <header data-testid="public-header" /> }));
 vi.mock('@/lib/voice/vapi-client', () => ({ createVapiClient: vi.fn() }));
@@ -270,7 +270,7 @@ describe('StaffChat', () => {
   it('shows a closed conversation without a reply box', async () => {
     fakeFetch({ [`GET ${SB}/messages`]: { json: staffThread({ supportMode: 'ended', ended: true, canReply: false }) } });
     render(<StaffChat conversationId="vapi_abc" />);
-    expect(await screen.findByText('This conversation is closed.')).toBeTruthy();
+    expect(await screen.findByText('This support conversation and ticket are closed.')).toBeTruthy();
     expect(screen.queryByLabelText('Reply to the customer')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
   });
@@ -351,6 +351,27 @@ describe('SupportPage with a specialist', () => {
     await userEvent.click(save);
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(3);
+  });
+
+  it('keeps the call going after the first failure, and ends it if saving fails again when the customer retries (AC-47.2)', async () => {
+    const end = vi.fn(async () => {});
+    h.session = baseSession({ end });
+    const f = fakeFetch({
+      'POST /api/support/link': [
+        { status: 503, json: { error: 'unavailable' } },
+        { status: 503, json: { error: 'unavailable' } },
+        { status: 503, json: { error: 'unavailable' } },
+        { status: 503, json: { error: 'unavailable' } },
+      ],
+    });
+    render(<SupportPage config={vapi} embedded linkIdentity />);
+    const save = await screen.findByRole('button', { name: COPY.link.saveAction });
+    expect(end).not.toHaveBeenCalled();
+    await userEvent.click(save);
+    await waitFor(() => expect(end).toHaveBeenCalledTimes(1));
+    expect(f.calls.filter((c) => c.url === '/api/support/link')).toHaveLength(4);
+    // The way to save it stays visible.
+    expect(await screen.findByRole('button', { name: COPY.link.saveAction })).toBeTruthy();
   });
 
   it('does not retry a refusal (another owner): one attempt, then the failed state', async () => {
