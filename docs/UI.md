@@ -72,7 +72,7 @@ GET /api/conversations/<id>/state   (server only, service role)
 | Partial transcript | Partial text updates in place, then finalizes; no flicker, no typing indicator |
 | Timestamps | Omitted ("if useful" in the spec) |
 | Transcript after the call | Kept next to the completion screen |
-| Mute control, phone number, rating | Not built (not in the spec / optional) |
+| Mute control, phone number, rating | Not built (not in the spec / optional). Pause and mute were investigated rather than built: `docs/PAUSE-RESUME.md`, with a developer-only workbench at `/dev/voice-lab` (same 404-in-production rule as `/dev/states`; it uses the real assistant) |
 | Colors | Primary `#0c3380` and accent `#0a7fa8` sampled from the logo; **provisional** until the approved brand values are available |
 
 ## Accessibility

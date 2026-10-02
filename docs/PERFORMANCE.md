@@ -42,6 +42,7 @@ Per model turn, `conversation_turns.timings` (JSON, written after the reply has 
 | `ack_ms`, `ack_category` | When the spoken acknowledgement went out, and which kind |
 | `speech_to_agent_ms` | Customer stopped speaking to request received. **Approximate**: it starts at the `speech-update` webhook's arrival, which has its own delay |
 | `prewarmed` | The turn used a pre-started agent process |
+| `delivered`, `client_closed_ms` | Whether the reply reached Vapi. `false` means the connection closed first (the customer talked over the assistant mid-turn); `client_closed_ms` is when. The turn itself still finished and was saved |
 
 `conversation_turns.latency_ms` keeps its old meaning (start of the turn to just before the save).
 `tool_calls.duration_ms` is still the MCP server's own view of a tool (validation plus the tool, not the bookkeeping write).
@@ -49,9 +50,9 @@ Turns answered by the Session Controller itself (closers, an ended session) have
 
 **What the server cannot see**: speech recognition, end-of-speech detection, speech synthesis and playback. The end-of-call
 report is believed to carry Vapi's own averages (`artifact.performanceMetrics`: transcriber, endpointing, model, voice and
-turn latency). Those are kept in the `call_ended` event as `vapi_latency_ms` (numbers only). **This shape has not been
-confirmed against a real report yet**: run a call with `AGENT_DEBUG=1`, end it, and check that the Vapi-side averages show
-up in `npm run report`. If they do not, the field names in `services/agent/src/observability.ts` need adjusting.
+turn latency). Those are kept in the `call_ended` event as `vapi_latency_ms` (numbers only). **Confirmed on real calls
+(2026-10-02)**: the names match and `npm run report` shows them. A call with no real exchange reports zeros, and so did one
+call that had three customer turns, so a zero means "not measured", not "instant".
 
 ## Reading it
 
@@ -60,19 +61,56 @@ npm run report -- --since 1h        # latency breakdown: p50 / p95 / max per pie
 npm run trace -- <conversation id>  # one call, with a breakdown under every agent turn
 ```
 
-## Baseline (to be filled from real calls)
+## Baseline
 
-Per the plan, the latency budget is set from measurements, not guessed. **No numbers are recorded here yet.**
+Per the plan, the latency budget is set from measurements, not guessed. **No budget has been set yet.**
+
+### First measurements (2026-10-02): a development session, not a clean baseline
+
+From `npm run report -- --since 3h`: 32 conversations, 64 turns, of which **17 carry timings** (the rest are from before
+timings existed). They mix ordinary test calls with the pause/resume experiments, and the window contains 12 error events,
+so treat the numbers as indicative only. Agent pre-start was off.
+
+| Piece | p50 | p95 | Share of turn time |
+|---|---|---|---|
+| Whole turn | 12.0 s | 74.5 s | |
+| Queue (waiting behind an earlier turn) | 7.3 s | 56.3 s | 54% |
+| Agent start | 0.49 s | **30.3 s** | 26% |
+| Model | 3.2 s | 3.9 s | 17% |
+| Retrieval | 0.13 s | 0.41 s | 1% |
+| History | 0.29 s | 0.34 s | 1% |
+| Save | 0.14 s | 0.31 s | 1% |
+| First reply byte | 2.5 s | 2.5 s | (always the acknowledgement) |
+| Vapi-side turn average (10 calls) | 818 ms | | model 265 ms, voice 503 ms, transcriber 49 ms |
+
+What it says:
+
+1. **Agent start is bimodal.** Usually about half a second, but **30.3 s on two consecutive turns of one call** and 14.5 s on
+   the next. Thirty seconds is suspiciously round: it matches the default connection timeout of the agent's tool (MCP)
+   server, which would mean the agent waited for a tool server that did not answer and then carried on without it. **This is
+   a hypothesis, not a finding**: those turns used no tools, and other turns in the same window called a tool in 270 ms. To
+   check: from the machine running the agent, is `MCP_SERVER_URL` reachable quickly every time (a service that sleeps when
+   idle, or a cold start, would do this)? Is `AGENT_PREWARM=1` any different?
+2. **Queueing, not the model, is the largest share.** When one turn is slow the customer keeps talking, and each new request
+   waits behind the unfinished one (31.5 s, then 56.3 s in one call), so delays compound. This is the serialisation problem
+   described under "Interruptions" in `docs/VAPI.md`, and the strongest argument for cancelling superseded turns later.
+3. **The model itself is fine**: 3.2 s median, 3.9 s at the 95th percentile. Retrieval, history and saving are about 1% of a
+   turn together; the earlier safe speedups were not where the time was.
+4. **Every timed turn needed the acknowledgement** (first reply byte is always 2.5 s). With a 3.2 s model median that is
+   expected; it is not evidence the acknowledgement is firing wrongly.
+
+### Procedure for a clean baseline
 
 1. Make sure migration `20261002000009_turn_timings.sql` is applied and the agent has been restarted.
 2. With `AGENT_PREWARM` unset, make 1 or 2 real calls of about 10 turns that cover: a general question, a customer lookup,
-   `TXN-9001`, `PAY-7002`, a support ticket, an escalation, and a short "that's all".
+   `TXN-9001`, `PAY-7002`, a support ticket, an escalation, and a short "that's all". Do not run the pause experiments in the
+   same window.
 3. `npm run report -- --since 1h`. Copy the "Latency breakdown" and "Vapi-side averages" lines into the table below.
 4. Decide the budget (for example "first reply byte under N seconds") from what you see, and write it down with the date.
 
 | Date | Pre-start | Turns | Whole turn p50 / p95 | Agent start | Model | Tools | Retrieval | History | First reply byte | Vapi-side turn avg |
 |---|---|---|---|---|---|---|---|---|---|---|
-| _not measured yet_ | | | | | | | | | | |
+| 2026-10-02 (mixed session, see above) | off | 17 | 12.0 s / 74.5 s | 0.49 s / 30.3 s | 3.2 s | 0.27 s (9 lookups) | 0.13 s | 0.29 s | 2.5 s | 818 ms |
 
 ## Changes that do not alter behaviour
 

@@ -55,21 +55,98 @@ Vapi's own `maxDurationSeconds`, which `vapi:setup` sets to `SESSION_MAX_SECONDS
 `speech-update` and sets Vapi's `silenceTimeoutSeconds` high (600) so Vapi's default does not cut calls before the controller.
 The browser also hangs up 3 s after the limit as a last resort; it never decides anything durable.
 
-### Ending a call from the server (needs a live check)
+### Ending a call from the server (verified 2026-10-02)
 
 Vapi documents live control through `call.monitor.controlUrl` (`{"type":"end-call"}`, `{"type":"say","content":...,
-"endCallAfterSpoken":true}`). The docs do not say whether that URL reaches web-SDK calls or webhook payloads. The
-controller therefore uses `monitor.controlUrl` when a webhook carries one, and otherwise falls back to a REST
-`DELETE /call/{id}` with `VAPI_API_KEY`, which is **unverified for live web calls**. If neither hangs up, the session is
-still marked ended in the database, further turns are refused, and Vapi's `maxDurationSeconds` or the browser ends the
-call. To verify: run a call with `AGENT_DEBUG=1`, stay silent, and watch whether the call drops at about 26 s. Record the
-result here.
+"endCallAfterSpoken":true}`). The controller uses `monitor.controlUrl` when a webhook carries one, and otherwise falls back
+to a REST `DELETE /call/{id}` with `VAPI_API_KEY`.
+
+**It works on live web calls.** Three silence timeouts and one 360-second session timeout were each followed by Vapi ending
+the call within seconds, after the `session_ended` row was written, with `endedReason: assistant-ended-call-after-message-spoken`.
+Which of the two routes did it is not recorded. If a hang-up ever fails, the session is still marked ended in the database,
+further turns are refused, and Vapi's `maxDurationSeconds` or the browser ends the call.
+
+**Check after every `vapi:setup`:** run it again with `--dry-run` and confirm the printed `serverMessages` includes
+`speech-update`. On 2026-10-02 the live assistant had the session limits from setup but *not* `speech-update`; the agent
+service could then not see anyone speaking, its silence timer ran from the start of the call, and every call was cut at about
+26 seconds unless the customer's first request arrived sooner.
+
+## Interruptions (barge-in)
+
+Build Plan V2, Iteration 4. A customer can talk over the assistant. In the browser nothing special is needed
+(`voiceReducer` accepts the customer speaking from any live state); whether the assistant actually *stops*, and what
+counts as the customer speaking, is decided by Vapi from the assistant's configuration. Until now this repo set none of it,
+so the live assistant used whatever the dashboard has. `npm run vapi:setup -- --url ... --dry-run` now prints the current
+`stopSpeakingPlan`, `startSpeakingPlan` and `backgroundSpeechDenoisingPlan` (empty means Vapi's defaults) and the backup
+file saves them.
+
+### The knobs (all optional: unset means the assistant is left exactly as it is)
+
+Set in `.env.local`, then run `vapi:setup`. Only the variables you set are changed; the rest of each plan is kept.
+
+| Variable | Vapi field | Range (Vapi default) | Effect |
+|---|---|---|---|
+| `INTERRUPT_NUM_WORDS` | `stopSpeakingPlan.numWords` | 0 to 10 (0) | Words the customer must say before the assistant stops. 0 reacts at once. Words like "stop", "wait", "no", "actually" always interrupt; "okay", "yeah", "right", "mm-hmm" never do |
+| `INTERRUPT_VOICE_SECONDS` | `stopSpeakingPlan.voiceSeconds` | 0 to 0.5 (0.2) | Voice activity needed before the assistant stops (used when `numWords` is 0). Lower is more responsive and more easily set off by noise |
+| `INTERRUPT_BACKOFF_SECONDS` | `stopSpeakingPlan.backoffSeconds` | 0 to 10 (1) | How long the assistant waits before speaking again after being interrupted |
+| `START_WAIT_SECONDS` | `startSpeakingPlan.waitSeconds` | 0 to 5 (0.4) | How long it waits after the customer stops before answering. Higher cuts in less often |
+| `SMART_DENOISING` | `backgroundSpeechDenoisingPlan.smartDenoisingPlan.enabled` | 0 or 1 | Krisp background-noise removal on Vapi's side (keyboard, traffic, a TV, other voices). The experimental Fourier denoiser is not touched |
+
+Vapi has **no speech-confidence threshold** for interruption; the nearest levers are `numWords`, `voiceSeconds` and the
+acknowledgement/interruption phrase lists. The browser SDK already turns on Krisp noise cancellation on the customer's
+microphone, and does not set echo cancellation (browser/Daily defaults apply; whether that matters is for the noise test).
+
+Reasonable things to *try* (not applied): `INTERRUPT_NUM_WORDS=2` so a stray "mm" or a cough does not cut the assistant
+off, `INTERRUPT_VOICE_SECONDS=0.3`, `SMART_DENOISING=1`. Change one thing at a time and compare.
+
+### Noise test (plan section 33)
+
+On a real call, at the current settings and again after a change, each time while the assistant is speaking a long answer
+(for example "How do international payouts work?"):
+
+1. Do nothing (control).
+2. TV or a second voice in the background.
+3. Type on a keyboard near the microphone.
+4. Say "mm-hmm" or "okay".
+5. Cough or clear your throat.
+6. Say "wait, actually..." (a real interruption).
+
+For each: did the assistant stop? Then `npm run report -- --since 1h`: the **Voice** section shows how often the customer
+talked over the assistant, how many of those were under half a second (a rough noise indicator), and replies that never
+arrived. Record the settings and the outcome. Treat "stopped for 2 to 5" as too sensitive and "did not stop for 6" as not
+sensitive enough.
+
+### What the server does when a customer interrupts mid-turn
+
+Whether Vapi closes the `/chat/completions` request when the customer barges in is **not yet confirmed**. If it does:
+
+- the turn is **not cancelled**: it finishes and is saved exactly as before (including any ticket or escalation);
+- the reply cannot be delivered, so the turn's `timings` record `delivered: false` and `client_closed_ms` (visible in
+  `npm run trace` as "reply not delivered"), the controller is told so silence detection starts again, and no
+  acknowledgement is spoken, counted or rotated for someone who has gone;
+- the next request still waits behind the unfinished turn (serialisation is unchanged).
+
+Also: a goodbye after "that's all" no longer hangs up when the customer carries on with a real request ("wait, one more
+thing"); a repeated closer still ends the call, and noise alone changes nothing. Each call writes one `voice_stats` event
+(interruptions, short ones, replies not delivered, silence countdowns). Interruptions are counted when the customer starts
+speaking while the controller still believes the assistant is speaking; if Vapi sends "assistant stopped" before "customer
+started", real interruptions would be missed, so a genuine interruption test that reports zero means this ordering needs
+looking at. Durations come from webhook arrival times, so short-interruption counts are approximate.
+
+### Known gaps and deferred
+
+- The agent still "remembers" an answer the customer talked over: the full reply is saved and reloaded as history. Telling
+  the agent that a reply was not heard changes what it sees, so it waits for live evidence from the report above.
+- Cancelling an abandoned turn (never one that is creating a ticket or escalation) so the next request is not stuck behind
+  it: same reason.
+- Subscribing to Vapi's `user-interrupted` message (availability as a server message unconfirmed), and overriding echo
+  cancellation on the Daily input (needs proof it does not switch off Krisp).
 
 ## Pointing your assistant at it
 
 `scripts/vapi/setup.ts` **modifies the assistant in `VAPI_ASSISTANT_ID`**; it never creates one. It changes only the
 model (custom LLM at your URL), the webhook (`server`, `serverMessages`), the session-limit backstops
-(`maxDurationSeconds`, `silenceTimeoutSeconds`) and attaches a credential; voice, transcriber,
+(`maxDurationSeconds`, `silenceTimeoutSeconds`), any interruption and noise settings you set (see above) and attaches a credential; voice, transcriber,
 name and greeting stay as you configured them. Before patching it saves the previous model and webhook settings to
 `vapi-assistant-backup-<id>.json` (git-ignored) so the change can be undone by hand.
 

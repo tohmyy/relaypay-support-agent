@@ -2647,10 +2647,10 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 ## Voice Behavior
 
 - [~] AI can be interrupted (UI reducer allows barge-in; Vapi/assistant config + safeguards still to verify)
-- [~] User speech stops AI response (depends on Vapi; turn serialization prevents interleaved agent turns)
+- [~] User speech stops AI response (depends on Vapi; tuning knobs and measurements exist, see `docs/VAPI.md`; live behaviour not yet measured)
 - [ ] Background-noise behavior tested
 - [~] Voice lifecycle on client (`VoiceState`); Session Controller not yet central
-- [ ] Pause/resume investigated
+- [~] Pause/resume investigated (documented from Vapi's docs and the SDK in `docs/PAUSE-RESUME.md`; the live answers come from `/dev/voice-lab`)
 - [ ] Pause/resume implementation selected based on testing
 
 ## Performance
@@ -2719,7 +2719,7 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 - [ ] MCP-call limit
 - [x] Maximum execution depth per turn (`maxTurns: 6`)
 - [ ] Suspicious usage logging
-- [x] Server-side Session Controller enforcement (Iteration 1; server-initiated hang-up of a live web call still needs the live check in `docs/VAPI.md`)
+- [x] Server-side Session Controller enforcement (Iteration 1; server-initiated hang-up of a live web call verified 2026-10-02, see `docs/VAPI.md`; requires the assistant to be subscribed to `speech-update`)
 
 ---
 
