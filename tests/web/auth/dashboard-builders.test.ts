@@ -120,6 +120,8 @@ describe('staff queue', () => {
     ended_at: null as string | null,
     final_status: null as string | null,
     end_reason: null as string | null,
+    support_mode: null as string | null,
+    assigned_staff_id: null as string | null,
     ...over,
   });
   const now = new Date('2026-10-02T12:00:00Z');
@@ -127,8 +129,15 @@ describe('staff queue', () => {
   it('classifies and counts conversations', () => {
     expect(queueState(conv('a'))).toBe('open');
     expect(queueState(conv('b', { final_status: 'escalated' }))).toBe('escalated');
-    expect(queueState(conv('c', { final_status: 'escalated', ended_at: '2026-10-02T09:30:00Z' }))).toBe('waiting');
+    // Escalated for a callback (the voice call has ended) stays in the queue.
+    expect(queueState(conv('c', { final_status: 'escalated', ended_at: '2026-10-02T09:30:00Z' }))).toBe('escalated');
     expect(queueState(conv('d', { final_status: 'resolved', ended_at: '2026-10-02T09:30:00Z' }))).toBe('resolved');
+    // With a specialist: waiting until someone takes it, then in progress; closed is resolved.
+    expect(queueState(conv('h1', { final_status: 'escalated', support_mode: 'human' }))).toBe('waiting');
+    expect(queueState(conv('h2', { final_status: 'escalated', support_mode: 'human', assigned_staff_id: 'u-9' }))).toBe('in-progress');
+    expect(
+      queueState(conv('h3', { final_status: 'escalated', support_mode: 'ended', ended_at: '2026-10-02T09:30:00Z' })),
+    ).toBe('resolved');
 
     const queue = buildStaffQueue(
       {
@@ -138,15 +147,25 @@ describe('staff queue', () => {
           conv('c', { final_status: 'escalated', ended_at: '2026-10-02T09:30:00Z' }),
           conv('d', { final_status: 'resolved', ended_at: '2026-10-02T09:30:00Z' }),
           conv('e', { final_status: 'resolved', ended_at: '2026-10-01T09:30:00Z' }),
+          conv('f', { final_status: 'escalated', support_mode: 'human' }),
+          conv('g', { final_status: 'escalated', support_mode: 'human', assigned_staff_id: 'u-9' }),
         ],
         tickets: [{ ticket_id: 'TKT-000001', conversation_id: 'b', category: 'compliance', priority: 'high', status: 'open' }],
         customers: [{ customer_id: 'CUS-1001', company_name: 'LagosLedger', contact_name: 'Amara Okafor' }],
       },
       now,
     );
-    expect(queue.counts).toEqual({ open: 1, waiting: 1, escalated: 1, resolvedToday: 1 });
-    expect(queue.items.map((i) => i.state)).toEqual(['escalated', 'waiting', 'open', 'resolved', 'resolved']);
-    const escalated = queue.items[0];
+    expect(queue.counts).toEqual({ open: 1, waiting: 1, inProgress: 1, escalated: 2, resolvedToday: 1 });
+    expect(queue.items.map((i) => i.state)).toEqual([
+      'waiting',
+      'escalated',
+      'escalated',
+      'in-progress',
+      'open',
+      'resolved',
+      'resolved',
+    ]);
+    const escalated = queue.items.find((i) => i.conversationId === 'b')!;
     expect(escalated).toMatchObject({ customer: 'LagosLedger', issue: 'Compliance review', ticket: 'TKT-000001' });
   });
 

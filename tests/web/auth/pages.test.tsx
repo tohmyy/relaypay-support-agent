@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
     getCustomerPayouts: vi.fn(),
     getCustomerConversations: vi.fn(),
     getStaffQueueRows: vi.fn(),
+    getStaffProfiles: vi.fn(),
   },
 }));
 
@@ -68,6 +69,7 @@ beforeEach(() => {
   for (const f of [h.requireCustomer, h.requireStaff, ...Object.values(h.data)]) f.mockReset();
   h.data.getTranscript.mockResolvedValue([{ turn_number: 1, user_transcript: 'Where is my payout?', assistant_response: 'It is processing.' }]);
   h.data.getConversationTicket.mockResolvedValue(null);
+  h.data.getStaffProfiles.mockResolvedValue(new Map());
   h.data.getConversationEscalation.mockResolvedValue(null);
   h.data.getStaffCustomer.mockResolvedValue({ customer_id: 'CUS-1001', company_name: 'LagosLedger', contact_name: 'Amara Okafor', contact_email: 'amara@lagosledger.example', plan: 'Growth' });
 });

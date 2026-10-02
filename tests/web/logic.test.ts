@@ -166,6 +166,7 @@ describe('public conversation state', () => {
       escalation: { requestedTime: 'Tuesday at 2' },
       ended: true,
       endReason: null,
+      supportMode: 'ai',
       startedAt: null,
       serverTime: now.toISOString(),
       limits: null,
@@ -201,7 +202,7 @@ describe('public conversation state', () => {
     });
     const s = toPublicState(dirty);
     expect(Object.keys(s).sort()).toEqual([
-      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'ticketReference',
+      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'supportMode', 'ticketReference',
     ]);
     expect(JSON.stringify(s)).not.toMatch(/a@b\.co|Ada|secret|CUS-1001|my email/);
   });

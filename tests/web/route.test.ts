@@ -33,7 +33,7 @@ describe('GET /api/conversations/[id]/state', () => {
     });
     // Exactly the whitelisted fields, nothing from the underlying rows.
     expect(Object.keys(body).sort()).toEqual([
-      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'ticketReference',
+      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'supportMode', 'ticketReference',
     ]);
     expect(JSON.stringify(body)).not.toMatch(/secret text|internal summary|a@b\.co|Ada/);
   });

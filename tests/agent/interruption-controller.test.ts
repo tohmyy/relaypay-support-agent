@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionController } from '../../services/agent/src/session/controller';
-import { SESSION_TEXT, type SessionConfig } from '../../services/agent/src/session/types';
+import { DEFAULT_SESSION_CONFIG, SESSION_TEXT, type SessionConfig } from '../../services/agent/src/session/types';
 import type { VapiCallControl } from '../../services/agent/src/session/vapi-control';
 
 type Row = Record<string, unknown>;
@@ -47,7 +47,7 @@ function fakeDb(seed: { conversations?: Row[] } = {}) {
   return { db: { from } as unknown as SupabaseClient, tables };
 }
 
-const config: SessionConfig = { maxSeconds: 360, warningSeconds: 30, silenceSeconds: 15, countdownSeconds: 10 };
+const config: SessionConfig = { ...DEFAULT_SESSION_CONFIG, maxSeconds: 360, warningSeconds: 30, silenceSeconds: 15, countdownSeconds: 10 };
 const CALL = { id: 'call1' };
 const ID = 'vapi_call1';
 
