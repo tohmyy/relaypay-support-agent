@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
 import { canonicalizeIdentifiers } from '../../services/agent/src/display';
 import { saveTurn } from '../../services/agent/src/history';
@@ -93,6 +94,47 @@ describe('saveTurn display and spoken text', () => {
       display_text: 'Transaction TXN-9001 is processing.',
       spoken_text: 'Transaction TXN-9001 is processing.',
     });
+  });
+});
+
+describe('saveTurn before the display columns exist', () => {
+  const turn = {
+    conversationId: 'c1',
+    turnNumber: 1,
+    userMessage: 'Hello',
+    response: 'Hi there.',
+    answerType: 'direct_answer' as const,
+  };
+
+  /** A db whose conversation_turns insert fails once with the given error when it includes the new columns. */
+  const dbWithout = (error: { code?: string; message: string }) => {
+    const inserts: Record<string, unknown>[] = [];
+    const db = {
+      from: () => ({
+        insert: (row: Record<string, unknown>) => {
+          inserts.push(row);
+          return Promise.resolve({ data: null, error: 'display_text' in row ? error : null });
+        },
+        update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+      }),
+    } as unknown as SupabaseClient;
+    return { db, inserts };
+  };
+
+  it.each([
+    { code: 'PGRST204', message: "Could not find the 'display_text' column of 'conversation_turns' in the schema cache" },
+    { code: '42703', message: 'column "spoken_text" of relation "conversation_turns" does not exist' },
+  ])('saves the turn without them instead of failing it ($code)', async (error) => {
+    const { db, inserts } = dbWithout(error);
+    await expect(saveTurn(db, turn)).resolves.toBeUndefined();
+    expect(inserts).toHaveLength(2);
+    expect(inserts[1]).not.toHaveProperty('display_text');
+    expect(inserts[1]).toMatchObject({ assistant_response: 'Hi there.', user_transcript: 'Hello' });
+  });
+
+  it('still fails the turn for any other database error', async () => {
+    const { db } = dbWithout({ code: '23503', message: 'foreign key violation' });
+    await expect(saveTurn(db, turn)).rejects.toThrow('save turn');
   });
 });
 

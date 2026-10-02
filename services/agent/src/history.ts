@@ -61,6 +61,15 @@ export async function loadHistory(
   };
 }
 
+/** PostgREST `PGRST204` or Postgres `42703` (undefined column), or a message naming one of the two new columns. */
+function missingDisplayColumns(error: { code?: string; message: string }): boolean {
+  return (
+    error.code === 'PGRST204' ||
+    error.code === '42703' ||
+    /\b(display_text|spoken_text)\b/.test(error.message)
+  );
+}
+
 export async function saveTurn(
   db: SupabaseClient,
   t: {
@@ -77,19 +86,30 @@ export async function saveTurn(
     costUsd?: number;
   },
 ) {
-  const { error } = await db.from('conversation_turns').insert({
+  const base = {
     conversation_id: t.conversationId,
     turn_number: t.turnNumber,
     user_transcript: t.userMessage,
     assistant_response: t.response,
-    // The transcript shows the display form (reference numbers exact); the spoken form is what the customer heard.
-    display_text: canonicalizeIdentifiers(t.response),
-    spoken_text: t.response,
     answer_type: t.answerType,
     confidence_note: t.confidenceNote ?? null,
     latency_ms: t.latencyMs ?? null,
     cost_usd: t.costUsd ?? null,
+  };
+  // The transcript shows the display form (reference numbers exact); the spoken form is what the customer heard.
+  let { error } = await db.from('conversation_turns').insert({
+    ...base,
+    display_text: canonicalizeIdentifiers(t.response),
+    spoken_text: t.response,
   });
+  if (error && missingDisplayColumns(error)) {
+    // The database has not had the display/spoken columns added yet (migration 20261007000017). The turn must still
+    // be stored and answered: the legacy column holds the same reply, and the transcript falls back to it.
+    logEvent('warn', 'conversation_turns has no display_text/spoken_text yet; saving without them', {
+      conversation_id: t.conversationId,
+    });
+    ({ error } = await db.from('conversation_turns').insert(base));
+  }
   fail('save turn', error);
   const activity = new Date().toISOString();
   if (t.escalationCreated) {

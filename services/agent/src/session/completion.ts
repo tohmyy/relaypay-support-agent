@@ -23,20 +23,18 @@ function looksLikeRequest(raw: string): boolean {
 }
 
 const FILLER =
-  "(?:(?:ok|okay|alright|all right|no|nope|nah|yeah|yes|great|perfect|cool|awesome|thanks|thank you|thank you very much|thanks a lot|thank you so much|cheers|well|so|right) )*";
+  "(?:(?:ok|okay|alright|all right|no|nope|nah|yeah|yes|great|perfect|cool|awesome|thanks|thank you|thank you very much|thanks a lot|thank you so much|cheers|well|so|right|never mind|nevermind|forget it|actually|i think|i guess) )*";
 const TAIL =
   "(?: (?:thanks|thank you|thank you very much|thanks a lot|thank you so much|bye|goodbye|bye bye|for your help|for the help|for helping|have a (?:good|great|nice) (?:day|evening|night)|take care))*";
 const CORE = [
-  "that'?s (?:all|everything|it)(?: for now| for today| i needed)?",
-  "that is (?:all|everything|it)",
+  "that'?s (?:all|everything|it)(?: for now| for today| i needed| here)?",
+  'that is (?:all|everything|it)(?: here)?',
   "that'?ll be (?:all|everything)(?: for now| for today)?",
   'that will be (?:all|everything)(?: for now| for today)?',
-  "i'?m (?:done|all done|all set|finished)(?: now| for now)?",
-  'i am (?:done|all done|all set|finished)',
+  "(?:i'?m|i am|we'?re|we are) (?:all |now )?(?:done|finished|good|set)(?: here| now| for now| for today)?",
   "i don'?t need anything else",
   'i do not need anything else',
   "(?:there'?s )?nothing else(?: for now)?",
-  "we'?re (?:done|all set)",
   'all done',
   'all set',
   'goodbye',
@@ -63,6 +61,8 @@ export function classifyCompletion(text: string): Completion {
   const words = n.split(' ');
   if (words.length > MAX_WORDS) return 'none';
   if (CLEAR.test(n)) return 'clear';
+  // "Never mind" on its own can withdraw a question rather than end the call: check before closing.
+  if (/^(?:ok |okay |actually |well )*(?:never ?mind|forget it)(?: please| thanks| thank you)?$/.test(n)) return 'ambiguous';
   if (words.length <= 6 && words.every((w) => ACK_WORDS.has(w)) && words.some((w) => THANKS_WORDS.has(w))) {
     return 'ambiguous';
   }

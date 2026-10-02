@@ -94,6 +94,32 @@ describe.skipIf(!live)('agent decisions (live model)', () => {
     expect(r.response).not.toMatch(/\b(will (definitely )?arrive|guaranteed to|i (can )?promise|i guarantee)\b/i);
   }, 90_000);
 
+  it("explains, without revealing anything, when a transaction is not on the customer's account", async () => {
+    const acct = await account();
+    if (!acct) return;
+    const c = conv('not-mine');
+    await linkTo(c, acct);
+    // TXN-9002 is seeded under CUS-1002, not the linked CUS-1001.
+    const r = await say(c, 'What is the status of TXN-9002?');
+    expect(r.toolsUsed).toContain('lookup_transaction');
+    expect(r.toolsUsed).not.toContain('create_support_ticket');
+    expect(r.escalated).toBe(false);
+    // Says it is not on their account and what to do next, rather than only "cannot find".
+    expect(r.response).toMatch(/your account/i);
+    expect(r.response).toMatch(/check|double-check|reference|try another|sign(ed)? in/i);
+    // Nothing about the other record: not its status, amount, owner, or that it exists elsewhere.
+    expect(r.response).not.toMatch(/completed|1,?200|EUR|CUS-1002|another (customer|account)|someone else|belongs to/i);
+  }, 90_000);
+
+  it('politely declines a question that has nothing to do with RelayPay and says what it can help with', async () => {
+    const r = await say(conv('weather'), "Um, I'd like to know the weather in Asia. Or in China.");
+    expect(r.answerType).toBe('decline');
+    expect(r.toolsUsed).toEqual([]);
+    expect(r.escalated).toBe(false);
+    expect(r.response).toMatch(/relaypay|payment|payout|invoice|transaction|account/i);
+    expect(r.response).not.toMatch(/trouble|specialist/i);
+  }, 90_000);
+
   it('escalates a restricted account', async () => {
     const r = await say(conv('restricted'), 'My account is restricted and I do not know why.');
     expect(r.answerType).toBe('escalation');

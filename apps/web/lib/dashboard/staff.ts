@@ -43,6 +43,17 @@ export interface QueueCustomerRow {
   contact_name: string | null;
 }
 
+/**
+ * How staff see a customer: the person ("Amara Okafor"), not the company. The company, then the customer id, only stand in
+ * when there is no name on record.
+ */
+export function customerLabel(
+  customer: Pick<QueueCustomerRow, 'company_name' | 'contact_name'> | null | undefined,
+  customerId?: string | null,
+): string {
+  return customer?.contact_name?.trim() || customer?.company_name?.trim() || customerId || 'Unknown caller';
+}
+
 /** A turn's recorded model cost; null when the turn was not billed (fixed replies). */
 export interface QueueCostRow {
   conversation_id: string;
@@ -160,7 +171,7 @@ export function buildStaffQueue(
         conversationId: c.conversation_id,
         state,
         statusLabel: QUEUE_STATE_BADGES[state].label,
-        customer: customer?.company_name ?? (c.customer_id ? c.customer_id : 'Unknown caller'),
+        customer: customerLabel(customer, c.customer_id),
         issue: issueLabel(ticket?.category),
         ticket: ticket?.ticket_id ?? null,
         started: formatDate(c.started_at),

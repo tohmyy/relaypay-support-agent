@@ -98,6 +98,19 @@ describe('<authenticated_customer> block and the system prompt', () => {
     expect(SYSTEM).toMatch(/Escalate straight away/);
   });
 
+  it('explains a lookup that finds nothing without revealing another account\'s record', () => {
+    expect(SYSTEM).toMatch(/## When a lookup finds nothing/);
+    expect(SYSTEM).toMatch(/no transaction \(or payout\) with that reference on their account/);
+    expect(SYSTEM).toMatch(/Never say or hint that the record exists under another account/);
+    expect(SYSTEM).toMatch(/Do not create a ticket on a first miss/);
+  });
+
+  it('declines questions that have nothing to do with RelayPay and says what it can help with', () => {
+    expect(SYSTEM).toMatch(/# Questions outside RelayPay/);
+    expect(SYSTEM).toMatch(/Do not search, call any tool, create a ticket, escalate or offer a specialist, and never say you are having trouble/);
+    expect(SYSTEM).toMatch(/payments, payouts, invoices, transactions, their account and verification/);
+  });
+
   it('says the platform ends the session and the model never closes the case (AC-34, AC-35)', () => {
     expect(SYSTEM).toMatch(/You never end the call, close the case or mark anything resolved yourself/);
     expect(SYSTEM).toMatch(/platform ends the session/);

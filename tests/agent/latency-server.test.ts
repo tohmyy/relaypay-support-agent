@@ -107,6 +107,24 @@ describe('contextual acknowledgements', () => {
     expect(ACK_TEMPLATES.generic).toContain(spoken[0].trim());
   });
 
+  it('holds back a guessed acknowledgement: a plain slow answer arrives without a leading "let me check"', async () => {
+    const url = await start({ fillerAfterMs: 20, weakFillerAfterMs: 400, runTurn: slow(120) });
+    expect(await speakLines(url, 'hello')).toEqual(['Done.']);
+  });
+
+  it('still speaks a guessed acknowledgement once the turn is slower than the longer delay', async () => {
+    const url = await start({ fillerAfterMs: 20, weakFillerAfterMs: 60, runTurn: slow(200) });
+    const spoken = await speakLines(url, 'hello');
+    expect(spoken).toHaveLength(2);
+    expect(ACK_TEMPLATES.generic).toContain(spoken[0].trim());
+  });
+
+  it('speaks a known cue (a reference in the message) at the normal delay even when guesses wait', async () => {
+    const url = await start({ fillerAfterMs: 20, weakFillerAfterMs: 400, runTurn: slow(120) });
+    const spoken = await speakLines(url, 'Can you check transaction TXN-9001?');
+    expect(ACK_TEMPLATES.transaction_lookup).toContain(spoken[0].trim());
+  });
+
   it('keeps the original filler available as a generic phrase', () => {
     expect(ACK_TEMPLATES.generic).toContain(SLOW_FILLER.trim());
   });

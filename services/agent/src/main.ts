@@ -44,6 +44,7 @@ const server = createAgentServer({
   session,
   warm,
   fillerAfterMs: env.ACK_AFTER_MS,
+  weakFillerAfterMs: env.ACK_WEAK_AFTER_MS,
   ready: createReadyCheck({ db, mcpUrl: env.MCP_SERVER_URL }),
 });
 

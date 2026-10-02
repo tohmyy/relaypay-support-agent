@@ -10,6 +10,8 @@ export interface ConversationTurn {
   displayText?: string;
   spokenText?: string | null;
   source?: 'live' | 'typed' | 'durable';
+  /** Text of the segments the provider has finished in this turn; the open partial is shown after it, never kept. */
+  committed?: string;
   /** True once the sentence is complete; a partial turn is updated in place. */
   final: boolean;
   timestamp: number;
@@ -25,20 +27,23 @@ export interface DurableTranscriptTurn {
 
 const normalized = (text: string) => text.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 
-function mergeChunk(previous: string, next: string): string {
-  const a = previous.trim();
-  const b = next.trim();
+/**
+ * Puts a segment after the text the provider has already finished. A segment that restates everything finished so far
+ * (some providers resend the whole turn) replaces it instead of repeating it.
+ */
+function joinSegments(committed: string, segment: string): string {
+  const a = committed.trim();
+  const b = segment.trim();
   if (!a) return b;
-  if (!b || normalized(a) === normalized(b)) return b || a;
+  if (!b) return a;
   if (normalized(b).startsWith(normalized(a))) return b;
-  if (normalized(a).startsWith(normalized(b))) return a;
   return `${a} ${b}`.replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Folds a transcript event into the list of turns. A partial update replaces the text of the open
- * turn from the same speaker (no flicker, no duplicates); a final event closes it. Anything else
- * starts a new turn.
+ * Folds a transcript event into the list of turns. A partial replaces the open partial of the current turn (the
+ * recognizer revises earlier words, so partials are never appended); a final is committed and the next segment from the
+ * same speaker continues the same bubble. Anything else starts a new turn.
  */
 export function applyTranscript(
   turns: ConversationTurn[],
@@ -51,14 +56,22 @@ export function applyTranscript(
   // Providers may emit a premature `final` at a pause and continue the same reply in another event. Until the other
   // speaker talks, all chunks belong to one logical/persisted turn and therefore one bubble.
   if (last && last.speaker === event.role && last.source !== 'durable') {
+    // A turn made before `committed` existed (typed, restored) counts as fully committed when it is final.
+    const committed = last.committed ?? (last.final ? last.text : '');
+    let joined = joinSegments(committed, text);
+    // A late, shorter partial that is only the start of what is already showing is stale: keep the longer text.
+    if (!event.final && !last.final && normalized(last.text).startsWith(normalized(joined))) joined = last.text;
     return [
       ...turns.slice(0, -1),
-      { ...last, text: mergeChunk(last.text, text), displayText: mergeChunk(last.displayText ?? last.text, text), final: event.final },
+      { ...last, text: joined, displayText: joined, committed: event.final ? joined : committed, final: event.final },
     ];
   }
   const numericIds = turns.map((turn) => (typeof turn.id === 'number' ? turn.id : 0));
   const id = Math.max(0, ...numericIds) + 1;
-  return [...turns, { id, speaker: event.role, text, displayText: text, source: 'live', final: event.final, timestamp: now }];
+  return [
+    ...turns,
+    { id, speaker: event.role, text, displayText: text, source: 'live', committed: event.final ? text : '', final: event.final, timestamp: now },
+  ];
 }
 
 /** Adds a turn the customer typed (for example the escalation form), already complete. */

@@ -27,6 +27,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `SESSION_RATE_MAX`, `SESSION_RATE_WINDOW_SECONDS` | agent, web server | no | New conversations per signed-in customer per window (defaults 8 per 3600 s; 0 = off). Enforced only when `NODE_ENV=production` |
 | `GLOBAL_SESSION_RATE_MAX`, `GLOBAL_SESSION_RATE_WINDOW_SECONDS` | agent | no | New conversations by anyone per window, a circuit breaker (defaults 60 per 600 s; 0 = off). Enforced only when `NODE_ENV=production` |
 | `ACK_AFTER_MS` | agent | no | Milliseconds before a slow reply gets a spoken acknowledgement. Default 2500 (200 to 30000) |
+| `ACK_WEAK_AFTER_MS` | agent | no | Same, for an acknowledgement that is only a guess (no tool running, nothing in what the caller said). Default twice `ACK_AFTER_MS` (200 to 60000) |
 | `AGENT_PREWARM` | agent | no | `1` keeps an agent process started per live call. **Default off**; compare first (`docs/PERFORMANCE.md`) |
 | `PREWARM_MAX`, `PREWARM_TTL_SECONDS` | agent | no | Most warm processes at once (default 8) and how long an unused one lives (default 90) |
 | `INTERRUPT_NUM_WORDS`, `INTERRUPT_VOICE_SECONDS`, `INTERRUPT_BACKOFF_SECONDS`, `START_WAIT_SECONDS` | vapi:setup | no | Optional interruption tuning (0 to 10, 0 to 0.5, 0 to 10, 0 to 5). Blank leaves the assistant as configured. See `docs/VAPI.md` |

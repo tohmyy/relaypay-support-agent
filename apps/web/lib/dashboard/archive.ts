@@ -6,6 +6,7 @@ import {
   type Badge,
 } from './badges';
 import {
+  customerLabel,
   issueLabel,
   sumCosts,
   type QueueConversationRow,
@@ -152,7 +153,7 @@ export function buildArchiveRows(input: ArchiveInput): ArchiveRow[] {
       startedAt: c.started_at ?? '',
       endedAt: c.ended_at,
       channel: channelBadge(c.channel),
-      customer: customer?.company_name ?? c.customer_id ?? 'Unknown caller',
+      customer: customerLabel(customer, c.customer_id),
       outcome: conversationOutcomeBadge(c, 'staff'),
       escalation: escalation ? workStatusBadge(escalation.status) : null,
       // The escalation's ticket is the one staff work on; otherwise the conversation's latest ticket.
@@ -232,7 +233,7 @@ export function buildEscalationRows(input: {
       conversationId: e.conversation_id,
       status: workStatusBadge(e.status),
       ticketStatus: ticket && ticket.status !== e.status ? workStatusBadge(ticket.status) : null,
-      customer: customer?.company_name ?? customerId ?? 'Unknown caller',
+      customer: customerLabel(customer, customerId),
       topic: issueLabel(ticket?.category ?? e.category),
       reasonPreview: preview(e.reason),
       assignee: conversation?.assigned_staff_id ? (input.staff.get(conversation.assigned_staff_id)?.name ?? null) : null,

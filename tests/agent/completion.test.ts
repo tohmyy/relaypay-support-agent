@@ -20,9 +20,21 @@ describe('classifyCompletion', () => {
     "that'll be all, good bye",
     'good bye',
     'have a great day',
+    'Never mind. I think we are done here',
+    "I think we're done",
+    'we are done here',
+    "actually that's all",
+    "I'm all set here",
   ])('treats "%s" as a clear closer', (text) => {
     expect(classifyCompletion(text)).toBe('clear');
   });
+
+  it.each(['Never mind', 'nevermind.', 'Okay, never mind', 'forget it'])(
+    'treats "%s" as ambiguous (a withdrawn question, confirm first)',
+    (text) => {
+      expect(classifyCompletion(text)).toBe('ambiguous');
+    },
+  );
 
   it.each(['Okay, thanks.', 'thank you', 'Great, thanks a lot', 'perfect thanks', "that's helpful thanks"])(
     'treats "%s" as ambiguous (confirm first)',
@@ -37,6 +49,9 @@ describe('classifyCompletion', () => {
     "That's all well and good but my payout is still missing from last week",
     "That's all?",
     'I need to send 500 dollars',
+    'Never mind, what about my payout',
+    "I'm done with the form but where is TXN-9001",
+    "we're not done, my payout is still missing",
     'okay',
     'yes',
     'no',

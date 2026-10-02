@@ -35,6 +35,12 @@ export interface AgentServerOptions {
   db?: SupabaseClient;
   /** Speak a short acknowledgement if the reply takes longer than this. */
   fillerAfterMs?: number;
+  /**
+   * Same, for an acknowledgement that is only a guess at what the turn is doing (nothing known from a tool or from what
+   * the customer said). Defaults to twice `fillerAfterMs`: a guessed "let me check that" before most answers is the
+   * stutter customers hear, and it can say the wrong thing.
+   */
+  weakFillerAfterMs?: number;
   /** Session limits, silence and "that's all" handling. Absent means turns run unconditionally (tests, scripts). */
   session?: SessionController;
   /** Pre-started agent processes: warmed when a call starts, released when it ends. Absent means none. */
@@ -94,6 +100,7 @@ interface Answered {
 export function createAgentServer(opts: AgentServerOptions): Server {
   const queues = new Map<string, Promise<unknown>>();
   const fillerAfter = opts.fillerAfterMs ?? DEFAULT_FILLER_AFTER_MS;
+  const weakFillerAfter = Math.max(fillerAfter, opts.weakFillerAfterMs ?? fillerAfter * 2);
   const acks = opts.acks ?? new AckRotation();
 
   function serialized<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
@@ -222,18 +229,24 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     // runs before the timer is created, and the timer re-checks eligibility at fire time.
     let closedEarly = false;
     const admission = opts.session?.admit?.(userMessage) ?? 'proceed';
-    const ackTimer =
-      admission === 'proceed'
-        ? setTimeout(() => {
-            if (closedEarly) return;
-            if (opts.session?.ackEligible && !opts.session.ackEligible(conversationId)) return;
-            const category = chooseAckCategory(progress, userMessage);
-            const at = timer.elapsed();
-            timer.set('ack_ms', at);
-            timer.set('ack_category', category);
-            speak(acks.pick(conversationId, category), at);
-          }, fillerAfter)
-        : undefined;
+    let ackTimer: NodeJS.Timeout | undefined;
+    const fireAck = () => {
+      if (closedEarly) return;
+      if (opts.session?.ackEligible && !opts.session.ackEligible(conversationId)) return;
+      const category = chooseAckCategory(progress, userMessage);
+      // A known cue (a tool the model is running, a reference the customer gave) is spoken at the normal delay. A guess
+      // waits for the longer one, and is dropped if the answer arrives first.
+      const guess = category === 'generic' || category === 'knowledge_base';
+      if (guess && timer.elapsed() < weakFillerAfter) {
+        ackTimer = setTimeout(fireAck, weakFillerAfter - timer.elapsed());
+        return;
+      }
+      const at = timer.elapsed();
+      timer.set('ack_ms', at);
+      timer.set('ack_category', category);
+      speak(acks.pick(conversationId, category), at);
+    };
+    if (admission === 'proceed') ackTimer = setTimeout(fireAck, fillerAfter);
     // The response closing before it finished means the connection dropped (for example the customer interrupted).
     res.on('close', () => {
       if (res.writableFinished) return;

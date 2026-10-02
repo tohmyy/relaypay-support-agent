@@ -9,7 +9,7 @@ import {
   type TransactionRow,
 } from '@/lib/dashboard/customer';
 import { formatDate, formatMoney, greeting, statusLabel, statusTone } from '@/lib/dashboard/format';
-import { QUEUE_CONVERSATION_COLUMNS, buildStaffQueue, queueState } from '@/lib/dashboard/staff';
+import { QUEUE_CONVERSATION_COLUMNS, buildStaffQueue, customerLabel, queueState } from '@/lib/dashboard/staff';
 import { FORBIDDEN_CUSTOMER_TERMS } from '@/lib/copy';
 import { SHELL_COPY, STAFF_COPY, allStrings } from '@/lib/shell-copy';
 import { parseCsv } from '../../../scripts/db/csv';
@@ -166,7 +166,7 @@ describe('staff queue', () => {
       'resolved',
     ]);
     const escalated = queue.items.find((i) => i.conversationId === 'b')!;
-    expect(escalated).toMatchObject({ customer: 'LagosLedger', issue: 'Compliance review', ticket: 'TKT-000001' });
+    expect(escalated).toMatchObject({ customer: 'Amara Okafor', issue: 'Compliance review', ticket: 'TKT-000001' });
   });
 
   it('labels unlinked callers and empty queues', () => {
@@ -220,5 +220,24 @@ describe('demo accounts', () => {
 
   it('skips customers without a contact email', () => {
     expect(buildDemoAccounts([{ customer_id: 'CUS-9', contact_email: null, contact_name: 'X' }]).filter((a) => a.role === 'customer')).toEqual([]);
+  });
+});
+
+describe('customerLabel', () => {
+  const amara = { company_name: 'LagosLedger', contact_name: 'Amara Okafor' };
+
+  it('names the person, not the company', () => {
+    expect(customerLabel(amara, 'CUS-1001')).toBe('Amara Okafor');
+  });
+
+  it('falls back to the company, then the customer id, when there is no name', () => {
+    expect(customerLabel({ company_name: 'LagosLedger', contact_name: null }, 'CUS-1001')).toBe('LagosLedger');
+    expect(customerLabel({ company_name: 'LagosLedger', contact_name: '  ' }, 'CUS-1001')).toBe('LagosLedger');
+    expect(customerLabel({ company_name: null, contact_name: null }, 'CUS-1001')).toBe('CUS-1001');
+  });
+
+  it('is "Unknown caller" when there is no customer at all', () => {
+    expect(customerLabel(undefined, null)).toBe('Unknown caller');
+    expect(customerLabel(null)).toBe('Unknown caller');
   });
 });

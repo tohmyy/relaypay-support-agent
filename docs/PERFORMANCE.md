@@ -142,7 +142,9 @@ Whether the handshake includes the MCP connection is not known until measured.
 
 ## Acknowledgements ("one moment")
 
-If a reply is not ready after `ACK_AFTER_MS` (2500), the caller hears a short acknowledgement. It replaces the single
+If a reply is not ready after `ACK_AFTER_MS` (2500), the caller hears a short acknowledgement, unless the phrase would only
+be a guess (the generic filler, or the knowledge cue alone): those wait for `ACK_WEAK_AFTER_MS` (default twice
+`ACK_AFTER_MS`), so most answers start with the answer rather than a "let me check" and a pause. It replaces the single
 fixed sentence. It is transport only (never stored as the answer), comes from a fixed library (no model call), and fits
 what the turn is doing:
 

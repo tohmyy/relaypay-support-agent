@@ -63,7 +63,7 @@ describe('staff archive cursor', () => {
     });
     expect(row).toMatchObject({
       conversationId: 'vapi_1',
-      customer: 'LagosLedger',
+      customer: 'Amara',
       ticket: 'TKT-000001',
       assignee: 'Sarah Adeyemi',
       costUsd: 0.04,

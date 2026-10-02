@@ -36,6 +36,57 @@ describe('applyTranscript', () => {
   });
 });
 
+describe('applyTranscript partial revisions', () => {
+  const feed = (role: 'user' | 'assistant', events: Array<[string, boolean]>) =>
+    events.reduce(
+      (turns, [text, final], i) => applyTranscript(turns, { role, text, final }, i + 1),
+      [] as ConversationTurn[],
+    );
+
+  it('replaces the open partial when the recognizer revises earlier words', () => {
+    const turns = feed('user', [
+      ["Hi. I'm not", false],
+      ["Hi. I'd like to, uh, know", false],
+      ["Hi. I'd like to, um, know more information about my transactions", false],
+    ]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].text).toBe("Hi. I'd like to, um, know more information about my transactions");
+  });
+
+  it('does the same for the assistant', () => {
+    const turns = feed('assistant', [
+      ["Let's", false],
+      ['Let me check the', false],
+      ['Let me check the relevant RelayPay information.', false],
+    ]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].text).toBe('Let me check the relevant RelayPay information.');
+  });
+
+  it('continues one bubble after a premature final without repeating the partial', () => {
+    const turns = feed('assistant', [
+      ['I checked TXN-9001.', true],
+      ['It is still', false],
+      ['It is still processing.', true],
+    ]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].text).toBe('I checked TXN-9001. It is still processing.');
+  });
+
+  it('does not repeat a segment that restates everything finished so far', () => {
+    const turns = feed('assistant', [
+      ['Hello there.', true],
+      ['Hello there. How can I help?', true],
+    ]);
+    expect(turns[0].text).toBe('Hello there. How can I help?');
+  });
+
+  it('starts a new bubble when the speaker changes', () => {
+    const turns = applyTranscript(feed('user', [['Hi', true]]), { role: 'assistant', text: 'Hello', final: false }, 9);
+    expect(turns.map((t) => t.speaker)).toEqual(['user', 'assistant']);
+  });
+});
+
 describe('reconcileDurable', () => {
   it('replaces a live bubble with the canonical display text, including TXN-9001', () => {
     const live: ConversationTurn[] = [

@@ -123,7 +123,7 @@ describe('staff conversation page', () => {
     h.data.getConversationTicket.mockResolvedValue({ ticket_id: 'TKT-000007', category: 'compliance' });
     h.data.getConversationEscalation.mockResolvedValue({ escalation_id: 'ESC-000001', reason: 'Account review', user_name: 'Amara', user_email: 'amara@lagosledger.example', preferred_time: 'Friday', status: 'open' });
     const out = await html(StaffConversation(params('vapi_abc')));
-    for (const text of ['Where is my payout?', 'LagosLedger', 'TKT-000007', 'Compliance review', 'ESC-000001', 'Friday']) expect(out).toContain(text);
+    for (const text of ['Where is my payout?', 'Amara Okafor', 'LagosLedger', 'TKT-000007', 'Compliance review', 'ESC-000001', 'Friday']) expect(out).toContain(text);
   });
 
   it('never reads account notes or verification status', async () => {

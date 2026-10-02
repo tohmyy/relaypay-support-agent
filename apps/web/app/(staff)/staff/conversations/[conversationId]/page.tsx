@@ -21,7 +21,7 @@ import {
 } from '@/lib/dashboard/data.server';
 import { channelBadge, conversationOutcomeBadge, queueStateBadge, workStatusBadge } from '@/lib/dashboard/badges';
 import { formatDateTime } from '@/lib/dashboard/format';
-import { formatUsd, issueLabel, queueState } from '@/lib/dashboard/staff';
+import { customerLabel, formatUsd, issueLabel, queueState } from '@/lib/dashboard/staff';
 import { buildConversationSummary } from '@/lib/dashboard/summary';
 import { formatWait } from '@/lib/human/notify';
 import { STAFF_COPY } from '@/lib/shell-copy';
@@ -56,11 +56,12 @@ export default async function StaffConversationPage({ params }: { params: Promis
   // Text-chat rows (a sender) belong to the live chat panel; the voice transcript keeps the AI-era turns.
   const voiceTurns = turns.filter((t) => !t.sender);
   const hasChat = conversation.support_mode === 'human' || turns.some((t) => t.sender);
-  const customerName = customer?.company_name ?? 'Unknown caller';
+  const customerName = customerLabel(customer, conversation.customer_id);
   const assignee = conversation.assigned_staff_id ? (staff.get(conversation.assigned_staff_id)?.name ?? null) : null;
   const escalationOpen = Boolean(escalation && escalation.status !== 'closed');
   const facts: [string, ReactNode][] = [
-    [copy.customer, customer ? `${customer.company_name ?? '—'} (${customer.contact_name ?? '—'})` : copy.unlinked],
+    [copy.customer, customer ? customerName : copy.unlinked],
+    ...(customer?.company_name ? ([['Company', customer.company_name]] as [string, ReactNode][]) : []),
     ...(customer?.contact_email ? ([['Email', customer.contact_email]] as [string, ReactNode][]) : []),
     ...(customer?.plan ? ([['Plan', customer.plan]] as [string, ReactNode][]) : []),
     ...(extras?.channel ? ([[copy.channel, <StatusBadge key="channel" badge={channelBadge(extras.channel)} />]] as [string, ReactNode][]) : []),
