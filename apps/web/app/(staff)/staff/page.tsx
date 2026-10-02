@@ -16,9 +16,10 @@ export default async function StaffQueuePage() {
   return (
     <>
       <PageTitle>{copy.title}</PageTitle>
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
         <Stat label={copy.open} value={queue.counts.open} />
         <Stat label={copy.waiting} value={queue.counts.waiting} />
+        <Stat label={copy.inProgress} value={queue.counts.inProgress} />
         <Stat label={copy.escalated} value={queue.counts.escalated} />
         <Stat label={copy.resolvedToday} value={queue.counts.resolvedToday} />
       </div>

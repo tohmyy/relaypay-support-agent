@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { homeFor } from '@/lib/auth/access';
 import { MAX_PASSWORD_CHARS, verifyAgainstDecoy, verifyPassword } from '@/lib/auth/password';
 import { safeNext } from '@/lib/auth/redirects';
+import { rateLimit, rateLimitReset } from '@/lib/auth/rate-limit';
 import { clearSession, createSession } from '@/lib/auth/session';
 import { LoginThrottle, loginThrottle } from '@/lib/auth/throttle';
 import { ROLES, type Role } from '@/lib/auth/token';
@@ -20,6 +21,9 @@ const credentials = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   password: z.string().min(1).max(MAX_PASSWORD_CHARS),
 });
+
+/** Attempts per window for one email and address; a successful sign-in clears the count. */
+const LOGIN_ATTEMPTS = { windowSeconds: 15 * 60, max: 5 } as const;
 
 interface LoginRow {
   id: string;
@@ -45,7 +49,11 @@ export async function login(_previous: LoginState, formData: FormData): Promise<
   const { email, password } = parsed.data;
 
   const key = LoginThrottle.key(email, await clientAddress());
-  if (loginThrottle.retryAfterMs(key) > 0) return { error: SHELL_COPY.signIn.tooMany };
+  // The shared limiter (Postgres) holds across instances and restarts; the in-memory one is the fallback when the
+  // shared store cannot be reached, and a second guard otherwise.
+  const shared = await rateLimit(`login:${key}`, LOGIN_ATTEMPTS);
+  if (!shared.allowed) return { error: SHELL_COPY.signIn.tooMany };
+  if (!shared.shared && loginThrottle.retryAfterMs(key) > 0) return { error: SHELL_COPY.signIn.tooMany };
 
   let user: LoginRow | undefined;
   try {
@@ -65,6 +73,7 @@ export async function login(_previous: LoginState, formData: FormData): Promise<
   }
 
   loginThrottle.recordSuccess(key);
+  void rateLimitReset(`login:${key}`);
   try {
     await createSession({ uid: user.id, role: user.role as Role, ...(user.customer_id ? { cid: user.customer_id } : {}) });
   } catch (error) {

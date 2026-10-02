@@ -5,7 +5,7 @@ import { Card, PageTitle } from '@/components/shell/ui';
 import { canAccessConversation } from '@/lib/auth/access';
 import { requireCustomer } from '@/lib/auth/dal';
 import { conversationOutcome } from '@/lib/dashboard/customer';
-import { getConversation, getConversationTicket, getTranscript } from '@/lib/dashboard/data.server';
+import { getConversation, getConversationTicket, getStaffProfiles, getTranscript } from '@/lib/dashboard/data.server';
 import { formatDate } from '@/lib/dashboard/format';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import { SHELL_COPY } from '@/lib/shell-copy';
@@ -24,11 +24,20 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
   if (!conversation || !canAccessConversation(user, conversation)) notFound();
   const [turns, ticket] = await Promise.all([getTranscript(conversationId), getConversationTicket(conversationId)]);
   const copy = SHELL_COPY.support;
+  const staffNames = Object.fromEntries(
+    [...(await getStaffProfiles(turns.map((t) => t.staff_user_id ?? '')).catch(() => new Map()))].map(([id, a]) => [id, a.name]),
+  );
   return (
     <>
       <PageTitle sub={`${formatDate(conversation.started_at)} · ${conversationOutcome(conversation)}`}>{copy.transcriptTitle}</PageTitle>
       <Card>
-        <TranscriptView turns={turns} customerLabel={copy.you} supportLabel={copy.support} emptyText={copy.transcriptEmpty} />
+        <TranscriptView
+          turns={turns}
+          customerLabel={copy.you}
+          supportLabel={copy.support}
+          emptyText={copy.transcriptEmpty}
+          staffNames={staffNames}
+        />
         {ticket?.ticket_id && (
           <p className="mt-4 text-sm text-ink-secondary">
             {copy.ticket}: <span className="font-medium text-ink">{ticket.ticket_id}</span>

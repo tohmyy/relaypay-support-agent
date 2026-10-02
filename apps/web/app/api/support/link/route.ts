@@ -1,5 +1,7 @@
 import { getCurrentUser } from '@/lib/auth/dal';
+import { sameOrigin } from '@/lib/auth/origin';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
+import { abuseLimitsFromEnv, activeEarlierIds, type OpenSessionRow } from '@/lib/session/abuse';
 import { restInsert, restPatch, restSelect } from '@/lib/supabase.server';
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -8,23 +10,49 @@ function reply(body: Record<string, unknown>, status: number) {
   return Response.json(body, { status, headers: NO_STORE });
 }
 
-/** Browsers send Origin on cross-site POSTs; a request from another site is refused. No Origin means a same-site tool. */
-function sameOrigin(request: Request): boolean {
-  const origin = request.headers.get('origin');
-  if (!origin) return true;
+/**
+ * Whether this call breaks a limit once it is tied to the customer. The voice agent enforces the same limits on its
+ * side and hangs up; this lets the page tell the customer straight away. A failed check never fails the link.
+ */
+async function limitBroken(customerId: string, conversationId: string): Promise<'active-session' | 'rate-limited' | null> {
+  const limits = abuseLimitsFromEnv();
   try {
-    return new URL(origin).host === new URL(request.url).host;
-  } catch {
-    return false;
+    if (limits.maxConcurrentSessions > 0) {
+      const [me] = (await restSelect<{ started_at: string | null }>(
+        'conversations',
+        `select=started_at&conversation_id=eq.${encodeURIComponent(conversationId)}&limit=1`,
+      )) ?? [];
+      const others =
+        (await restSelect<OpenSessionRow>(
+          'conversations',
+          `select=conversation_id,started_at,last_activity_at&customer_id=eq.${encodeURIComponent(customerId)}` +
+            `&support_mode=eq.ai&ended_at=is.null&conversation_id=neq.${encodeURIComponent(conversationId)}&limit=20`,
+        )) ?? [];
+      const earlier = activeEarlierIds(others, Date.parse(me?.started_at ?? ''), { maxSeconds: limits.sessionMaxSeconds });
+      if (earlier.length >= limits.maxConcurrentSessions) return 'active-session';
+    }
+    if (limits.sessionRateMax > 0) {
+      const since = new Date(Date.now() - limits.sessionRateWindowSeconds * 1000).toISOString();
+      const started =
+        (await restSelect<{ conversation_id: string }>(
+          'conversations',
+          `select=conversation_id&customer_id=eq.${encodeURIComponent(customerId)}&started_at=gte.${encodeURIComponent(since)}&limit=${limits.sessionRateMax + 2}`,
+        )) ?? [];
+      if (started.length > limits.sessionRateMax) return 'rate-limited';
+    }
+  } catch (error) {
+    console.error(`[web] session limit check failed: ${error instanceof Error ? error.message : String(error)}`);
   }
+  return null;
 }
 
 /**
- * Ties a call to the signed-in customer, once the browser has the call's id. This is for web authorisation only:
- * it decides who may read the call's transcript and state afterwards. The voice agent is not told who is calling.
+ * Ties a call to the signed-in customer, once the browser has the call's id. This decides who may read the call's
+ * transcript afterwards, lets the voice agent know who is calling (for the limits and the handoff to a specialist),
+ * and tells the page at once if the customer already has another active conversation or has started too many.
  *
- * Safe to repeat for the same customer; a call already tied to someone else is refused (409). Only customers can
- * link, and the customer id always comes from the server-side session, never from the request.
+ * Safe to repeat for the same customer; a call already tied to someone else is refused (409 conflict). Only customers
+ * can link, and the customer id always comes from the server-side session, never from the request.
  */
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return reply({ error: 'forbidden' }, 403);
@@ -49,10 +77,15 @@ export async function POST(request: Request) {
       customer_id: user.customerId,
       user_id: user.id,
     });
-    if (won.length > 0) return reply({ linked: true }, 200);
-    const [existing] = await restSelect<{ customer_id: string | null }>('conversations', `select=customer_id&${c}&limit=1`);
-    if (existing?.customer_id === user.customerId) return reply({ linked: true }, 200);
-    return reply({ error: 'conflict' }, 409);
+    if (won.length === 0) {
+      const [existing] = await restSelect<{ customer_id: string | null }>('conversations', `select=customer_id&${c}&limit=1`);
+      if (existing?.customer_id !== user.customerId) return reply({ error: 'conflict' }, 409);
+    }
+    // Linked (now or before). Say so even if a limit is broken: the agent needs the link to enforce it too.
+    const broken = await limitBroken(user.customerId, id);
+    if (broken === 'active-session') return reply({ linked: true, error: 'active-session' }, 409);
+    if (broken === 'rate-limited') return reply({ linked: true, error: 'rate-limited' }, 429);
+    return reply({ linked: true }, 200);
   } catch (error) {
     console.error(`[web] link failed: ${error instanceof Error ? error.message : String(error)}`);
     return reply({ error: 'unavailable' }, 503);

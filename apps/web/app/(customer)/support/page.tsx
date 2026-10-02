@@ -1,5 +1,7 @@
 import SupportPage, { type VoiceConfig } from '@/components/SupportPage';
+import HumanSupport from '@/components/shell/HumanSupport';
 import { requireCustomer } from '@/lib/auth/dal';
+import { getOpenHumanConversation } from '@/lib/dashboard/data.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +16,10 @@ function voiceConfig(previewRequested: boolean): VoiceConfig {
 
 /** The voice experience inside the signed-in shell; each real call is tied to this customer once it has an id. */
 export default async function CustomerSupportPage({ searchParams }: { searchParams: Promise<{ mock?: string }> }) {
-  await requireCustomer('/support');
+  const user = await requireCustomer('/support');
+  // A conversation that moved to a specialist is still open after a reload or a visit to another page.
+  const open = await getOpenHumanConversation(user.customerId as string).catch(() => null);
+  if (open) return <HumanSupport conversationId={open.conversation_id} />;
   const { mock } = await searchParams;
   return <SupportPage config={voiceConfig(mock === '1')} embedded linkIdentity />;
 }

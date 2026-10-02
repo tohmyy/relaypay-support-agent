@@ -24,7 +24,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
       restSelect<ConversationRows['turns'][number]>('conversation_turns', `select=turn_number,answer_type&${c}&order=turn_number.desc&limit=1`),
       restSelect<ConversationRows['tickets'][number]>('support_tickets', `select=ticket_id,created_at&${c}&order=created_at.desc&limit=1`),
       restSelect<ConversationRows['escalations'][number]>('escalations', `select=preferred_time&${c}&order=created_at.desc&limit=1`),
-      restSelect<ConversationRows['conversation'][number]>('conversations', `select=ended_at,end_reason,started_at,final_status,customer_id&${c}&limit=1`),
+      restSelect<ConversationRows['conversation'][number]>('conversations', `select=ended_at,end_reason,started_at,final_status,customer_id,support_mode,assigned_staff_id&${c}&limit=1`),
     ]);
     const linked = conversation[0]?.customer_id ?? null;
     if (linked) {
@@ -35,6 +35,8 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
           customer_id: linked,
           ended_at: conversation[0].ended_at,
           final_status: conversation[0].final_status ?? null,
+          support_mode: conversation[0].support_mode ?? null,
+          assigned_staff_id: conversation[0].assigned_staff_id ?? null,
         });
       if (!allowed) return Response.json(NEUTRAL_STATE, { headers: NO_STORE });
     }

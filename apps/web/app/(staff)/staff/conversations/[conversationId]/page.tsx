@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import StaffChat from '@/components/shell/StaffChat';
 import TranscriptView from '@/components/shell/TranscriptView';
 import { Card, PageTitle } from '@/components/shell/ui';
 import { canAccessConversation } from '@/lib/auth/access';
@@ -37,12 +38,16 @@ export default async function StaffConversationPage({ params }: { params: Promis
   ]);
   const escalation = ticket?.ticket_id ? await getConversationEscalation(ticket.ticket_id) : null;
   const copy = STAFF_COPY.detail;
+  // Text-chat rows (a sender) belong to the live chat panel; the voice transcript keeps the AI-era turns.
+  const voiceTurns = turns.filter((t) => !t.sender);
+  const hasChat = conversation.support_mode === 'human' || turns.some((t) => t.sender);
   const facts: [string, string][] = [
     [copy.customer, customer ? `${customer.company_name ?? '—'} (${customer.contact_name ?? '—'})` : copy.unlinked],
     ...(customer?.contact_email ? ([['Email', customer.contact_email]] as [string, string][]) : []),
     ...(customer?.plan ? ([['Plan', customer.plan]] as [string, string][]) : []),
     ['Started', formatDate(conversation.started_at)],
     ['Status', queueState(conversation)],
+    ...(conversation.support_mode === 'human' ? ([['With', 'Support specialist (text chat)']] as [string, string][]) : []),
     ...(ticket?.ticket_id ? ([[copy.ticket, `${ticket.ticket_id} · ${issueLabel(ticket.category)}`]] as [string, string][]) : []),
     ...(escalation
       ? ([
@@ -55,9 +60,17 @@ export default async function StaffConversationPage({ params }: { params: Promis
     <>
       <PageTitle>{copy.title}</PageTitle>
       <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
-        <Card title={copy.transcript}>
-          <TranscriptView turns={turns} customerLabel="Customer" supportLabel="Assistant" emptyText={copy.transcriptEmpty} />
-        </Card>
+        <div className="space-y-4">
+          <Card title={hasChat ? STAFF_COPY.chat.voiceTranscript : copy.transcript}>
+            <TranscriptView
+              turns={voiceTurns}
+              customerLabel="Customer"
+              supportLabel="Assistant"
+              emptyText={copy.transcriptEmpty}
+            />
+          </Card>
+          {hasChat && <StaffChat conversationId={conversationId} />}
+        </div>
         <Card>
           <dl className="space-y-3 text-sm">
             {facts.map(([label, value]) => (

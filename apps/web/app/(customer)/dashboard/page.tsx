@@ -2,7 +2,12 @@ import Link from 'next/link';
 import { Card, EmptyState, PageTitle, Stat, StatusBadge } from '@/components/shell/ui';
 import { requireCustomer } from '@/lib/auth/dal';
 import { buildCustomerOverview } from '@/lib/dashboard/customer';
-import { getCustomerConversations, getCustomerPayouts, getCustomerTransactions } from '@/lib/dashboard/data.server';
+import {
+  getCustomerConversations,
+  getCustomerPayouts,
+  getCustomerTransactions,
+  getOpenHumanConversation,
+} from '@/lib/dashboard/data.server';
 import { greeting } from '@/lib/dashboard/format';
 import { SHELL_COPY } from '@/lib/shell-copy';
 
@@ -11,16 +16,28 @@ export const dynamic = 'force-dynamic';
 export default async function DashboardPage() {
   const user = await requireCustomer('/dashboard');
   const customerId = user.customerId as string;
-  const [transactions, payouts, conversations] = await Promise.all([
+  const [transactions, payouts, conversations, openHuman] = await Promise.all([
     getCustomerTransactions(customerId),
     getCustomerPayouts(customerId),
     getCustomerConversations(customerId, 5),
+    getOpenHumanConversation(customerId).catch(() => null),
   ]);
   const overview = buildCustomerOverview({ transactions, payouts, conversations });
   const copy = SHELL_COPY.overview;
   return (
     <>
       <PageTitle>{greeting(new Date(), user.displayName)}</PageTitle>
+      {openHuman && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-accent-soft p-4">
+          <p className="text-sm text-ink">{SHELL_COPY.human.banner}</p>
+          <Link
+            href="/support"
+            className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover"
+          >
+            {SHELL_COPY.human.bannerAction}
+          </Link>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-3">
         <Link href="/payments" className="block">
           <Stat label={copy.paymentsCard} value={overview.payments.count} note={overview.payments.latest} />
