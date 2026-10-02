@@ -25,7 +25,15 @@ describe.skipIf(!live)('conversation state route (live Supabase)', () => {
   }
 
   it('follows a call from nothing, to a clarification, to a ticket, to an escalation, to the end', async () => {
-    expect((await state()).body).toEqual({ answerType: null, ticketReference: null, escalation: null, ended: false });
+    // Needs migration 20261001000008 (end_reason) applied to the database under test.
+    expect((await state()).body).toMatchObject({
+      answerType: null,
+      ticketReference: null,
+      escalation: null,
+      ended: false,
+      endReason: null,
+      startedAt: null,
+    });
 
     await db.from('conversations').insert({ conversation_id: id, channel: 'voice' });
     await db.from('conversation_turns').insert({

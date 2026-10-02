@@ -188,9 +188,45 @@ describe('handleVapiEvent', () => {
     expect((await handleVapiEvent(db, report())).finalStatus).toBe('escalated');
   });
 
+  it.each([
+    ['exceeded-max-duration', 'session-timeout', 'abandoned'],
+    ['silence-timed-out', 'silence-timeout', 'abandoned'],
+    ['customer-ended-call', 'user-ended', 'resolved'],
+    ['assistant-ended-call', 'agent-ended', 'resolved'],
+    ['pipeline-error-openai-llm-failed', 'error', 'error'],
+  ])('maps Vapi endedReason %s to end_reason %s (final_status %s)', async (endedReason, endReason, status) => {
+    const { db, conversations } = fakeDb({ turns: 2 });
+    const r = await handleVapiEvent(db, report({ endedReason }));
+    expect(conversations[0]).toMatchObject({ end_reason: endReason, final_status: status });
+    expect(r.finalStatus).toBe(status);
+  });
+
+  it('records the outcome but no end_reason for an unmapped Vapi reason', async () => {
+    const { db, conversations } = fakeDb({ turns: 1 });
+    await handleVapiEvent(db, report({ endedReason: 'some-new-reason' }));
+    expect(conversations[0]).toMatchObject({ end_reason: null, final_status: 'resolved' });
+  });
+
+  it('does not overwrite an end_reason the Session Controller already recorded', async () => {
+    const { db, conversations } = fakeDb({ turns: 2 });
+    await handleVapiEvent(db, { message: { type: 'status-update', status: 'in-progress', call: { id: 'call9' } } });
+    Object.assign(conversations[0], { end_reason: 'silence-timeout', final_status: 'abandoned', ended_at: 'earlier' });
+    const r = await handleVapiEvent(db, report({ endedReason: 'customer-ended-call' }));
+    expect(conversations[0]).toMatchObject({ end_reason: 'silence-timeout', final_status: 'abandoned', ended_at: 'earlier' });
+    expect(r.finalStatus).toBe('abandoned');
+  });
+
+  it('acknowledges speech-update without touching the database (the Session Controller consumes it)', async () => {
+    const { db, conversations, events } = fakeDb();
+    const r = await handleVapiEvent(db, { message: { type: 'speech-update', status: 'started', role: 'user', call: { id: 'c' } } });
+    expect(r).toMatchObject({ handled: true, conversationId: 'vapi_c' });
+    expect(conversations).toHaveLength(0);
+    expect(events).toHaveLength(0);
+  });
+
   it('ignores unknown, malformed and id-less messages', async () => {
     const { db, conversations } = fakeDb();
-    expect((await handleVapiEvent(db, { message: { type: 'speech-update', call: { id: 'c' } } })).handled).toBe(false);
+    expect((await handleVapiEvent(db, { message: { type: 'conversation-update', call: { id: 'c' } } })).handled).toBe(false);
     expect((await handleVapiEvent(db, {})).handled).toBe(false);
     expect((await handleVapiEvent(db, null)).handled).toBe(false);
     expect((await handleVapiEvent(db, { message: { type: 'end-of-call-report' } })).handled).toBe(false);

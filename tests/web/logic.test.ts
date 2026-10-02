@@ -137,8 +137,10 @@ describe('public conversation state', () => {
     ...over,
   });
 
+  const now = new Date('2026-10-01T12:00:00Z');
+
   it('is neutral when nothing is recorded', () => {
-    expect(toPublicState(rows())).toEqual(NEUTRAL_STATE);
+    expect(toPublicState(rows(), { now })).toEqual({ ...NEUTRAL_STATE, serverTime: now.toISOString() });
   });
 
   it('uses the latest turn, the newest ticket and the escalation time', () => {
@@ -156,13 +158,31 @@ describe('public conversation state', () => {
         escalations: [{ preferred_time: ' Tuesday at 2 ' }],
         conversation: [{ ended_at: '2026-09-30T12:00:00Z' }],
       }),
+      { now },
     );
     expect(s).toEqual({
       answerType: 'escalation',
       ticketReference: 'TKT-000002',
       escalation: { requestedTime: 'Tuesday at 2' },
       ended: true,
+      endReason: null,
+      startedAt: null,
+      serverTime: now.toISOString(),
+      limits: null,
     });
+  });
+
+  it('passes through a known end reason, session start and limits, and drops anything else', () => {
+    const limits = { sessionMaxSeconds: 360, warningSeconds: 30, silenceTimeoutSeconds: 15, countdownSeconds: 10 };
+    const s = toPublicState(
+      rows({ conversation: [{ ended_at: 'x', end_reason: 'session-timeout', started_at: '2026-10-01T11:54:00Z' }] }),
+      { now, limits },
+    );
+    expect(s).toMatchObject({ endReason: 'session-timeout', startedAt: '2026-10-01T11:54:00.000Z', limits });
+    for (const bad of ['internal-note', '', null, undefined]) {
+      expect(toPublicState(rows({ conversation: [{ ended_at: null, end_reason: bad as never }] })).endReason).toBeNull();
+    }
+    expect(toPublicState(rows({ conversation: [{ ended_at: null, started_at: 'not a date' }] })).startedAt).toBeNull();
   });
 
   it('drops unknown answer types and blank times', () => {
@@ -173,14 +193,16 @@ describe('public conversation state', () => {
     expect(s.escalation).toEqual({ requestedTime: null });
   });
 
-  it('exposes only the four public fields, whatever the rows contain', () => {
+  it('exposes only the whitelisted public fields, whatever the rows contain', () => {
     const dirty = rows({
       turns: [{ turn_number: 1, answer_type: 'escalation', user_transcript: 'my email is a@b.co' } as never],
       escalations: [{ preferred_time: 'noon', user_email: 'a@b.co', user_name: 'Ada', reason: 'x' } as never],
       tickets: [{ ticket_id: 'TKT-000009', summary: 'secret', customer_id: 'CUS-1001' } as never],
     });
     const s = toPublicState(dirty);
-    expect(Object.keys(s).sort()).toEqual(['answerType', 'ended', 'escalation', 'ticketReference']);
+    expect(Object.keys(s).sort()).toEqual([
+      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'ticketReference',
+    ]);
     expect(JSON.stringify(s)).not.toMatch(/a@b\.co|Ada|secret|CUS-1001|my email/);
   });
 

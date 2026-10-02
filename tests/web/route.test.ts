@@ -24,20 +24,51 @@ describe('GET /api/conversations/[id]/state', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     const body = await res.json();
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       answerType: 'escalation',
       ticketReference: 'TKT-000007',
       escalation: { requestedTime: 'Friday' },
       ended: false,
+      endReason: null,
     });
+    // Exactly the whitelisted fields, nothing from the underlying rows.
+    expect(Object.keys(body).sort()).toEqual([
+      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'ticketReference',
+    ]);
     expect(JSON.stringify(body)).not.toMatch(/secret text|internal summary|a@b\.co|Ada/);
+  });
+
+  it('reports why and when a session ended, and the limits the UI counts down against', async () => {
+    restSelect.mockImplementation(async (table: string) =>
+      table === 'conversations'
+        ? [{ ended_at: '2026-10-01T12:00:25Z', end_reason: 'silence-timeout', started_at: '2026-10-01T12:00:00Z' }]
+        : [],
+    );
+    const body = await (await call('vapi_abc-123')).json();
+    expect(body).toMatchObject({
+      ended: true,
+      endReason: 'silence-timeout',
+      startedAt: '2026-10-01T12:00:00.000Z',
+      limits: { sessionMaxSeconds: 360, warningSeconds: 30, silenceTimeoutSeconds: 15, countdownSeconds: 10 },
+    });
+    expect(Number.isFinite(Date.parse(body.serverTime))).toBe(true);
+    const conversationsQuery = restSelect.mock.calls.find(([t]) => t === 'conversations')![1] as string;
+    expect(conversationsQuery).toContain('end_reason');
+    expect(conversationsQuery).toContain('started_at');
   });
 
   it('answers an unknown conversation exactly like an empty one', async () => {
     restSelect.mockResolvedValue([]);
     const res = await call('vapi_does-not-exist');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ answerType: null, ticketReference: null, escalation: null, ended: false });
+    expect(await res.json()).toMatchObject({
+      answerType: null,
+      ticketReference: null,
+      escalation: null,
+      ended: false,
+      endReason: null,
+      startedAt: null,
+    });
   });
 
   it('rejects malformed ids before touching the database', async () => {

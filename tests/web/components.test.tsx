@@ -262,4 +262,74 @@ describe('SupportWorkspace', () => {
     );
     expect(container.textContent).not.toMatch(/\b(MCP|RAG|Claude|Supabase|SDK|embedding|tool call|agent)\b/i);
   });
+
+  describe('session timing', () => {
+    const live = { ...base, voice: { state: 'listening' } as const, turns: [turn(1, 'user', 'Hi')] };
+
+    it('shows the silence countdown during a call', () => {
+      render(<SupportWorkspace {...live} session={{ silenceCountdown: 7, secondsLeft: 200, sessionWarning: false }} />);
+      expect(screen.getByText(COPY.session.silenceHeading)).toBeTruthy();
+      expect(screen.getByText('Ending conversation in 7 seconds...')).toBeTruthy();
+      expect(screen.getByText(COPY.session.silenceHint)).toBeTruthy();
+      // One calm announcement for assistive technology, not one per second.
+      const announcement = screen.getByText(COPY.session.silenceScreenReader);
+      expect(announcement.closest('[role="status"]')).toBeTruthy();
+      expect(announcement.className).toContain('sr-only');
+      // The ticking text itself is hidden from assistive technology.
+      expect(screen.getByText('Ending conversation in 7 seconds...').closest('[aria-hidden="true"]')).toBeTruthy();
+    });
+
+    it('uses the singular for the last second', () => {
+      render(<SupportWorkspace {...live} session={{ silenceCountdown: 1, secondsLeft: 200, sessionWarning: false }} />);
+      expect(screen.getByText('Ending conversation in 1 second...')).toBeTruthy();
+    });
+
+    it('shows the time-limit warning, and the countdown wins when both apply', () => {
+      const { rerender } = render(
+        <SupportWorkspace {...live} session={{ silenceCountdown: null, secondsLeft: 24, sessionWarning: true }} />,
+      );
+      expect(screen.getByText(COPY.session.warningHeading)).toBeTruthy();
+      expect(screen.getByText('This support session will end in about 24 seconds.')).toBeTruthy();
+      rerender(<SupportWorkspace {...live} session={{ silenceCountdown: 5, secondsLeft: 24, sessionWarning: true }} />);
+      expect(screen.queryByText(COPY.session.warningHeading)).toBeNull();
+      expect(screen.getByText(COPY.session.silenceHeading)).toBeTruthy();
+    });
+
+    it('shows nothing extra when no notice applies', () => {
+      render(<SupportWorkspace {...live} session={{ silenceCountdown: null, secondsLeft: 200, sessionWarning: false }} />);
+      expect(screen.queryByText(COPY.session.silenceHeading)).toBeNull();
+      expect(screen.queryByText(COPY.session.warningHeading)).toBeNull();
+    });
+
+    it.each([
+      ['silence-timeout', COPY.session.endedBodySilence],
+      ['session-timeout', COPY.session.endedBodyTimeout],
+    ] as const)('explains a session that ended on %s and offers a new conversation', (endReason, body) => {
+      render(<SupportWorkspace {...base} voice={{ state: 'ended' }} support="completed" endReason={endReason} />);
+      expect(screen.getByRole('heading', { name: COPY.session.endedHeading })).toBeTruthy();
+      expect(screen.getByText(body)).toBeTruthy();
+      expect(screen.getByText(COPY.session.endedNewConversation)).toBeTruthy();
+      expect(screen.getByRole('button', { name: COPY.buttons.startAnother })).toBeTruthy();
+    });
+
+    it('keeps the normal ending for a conversation the customer finished', () => {
+      render(<SupportWorkspace {...base} voice={{ state: 'ended' }} support="completed" endReason="user-ended" />);
+      expect(screen.getByRole('heading', { name: COPY.complete.headingDefault })).toBeTruthy();
+      expect(screen.queryByText(COPY.session.endedNewConversation)).toBeNull();
+    });
+
+    it('still acknowledges a ticket when the session timed out', () => {
+      render(
+        <SupportWorkspace {...base} voice={{ state: 'ended' }} support="completed" endReason="session-timeout" ticketReference="TKT-000123" />,
+      );
+      expect(screen.getByText(/Reference: TKT-000123/)).toBeTruthy();
+    });
+
+    it('uses no technical terms in any session notice', () => {
+      const { container } = render(
+        <SupportWorkspace {...live} session={{ silenceCountdown: 3, secondsLeft: 20, sessionWarning: true }} />,
+      );
+      expect(container.textContent).not.toMatch(/\b(MCP|RAG|Claude|Supabase|SDK|Vapi|agent)\b/i);
+    });
+  });
 });

@@ -147,6 +147,91 @@ describe('POST /chat/completions', () => {
   });
 });
 
+describe('Session Controller integration', () => {
+  type Decision = { kind: 'proceed' } | { kind: 'reply'; text: string };
+  function fakeSession(decide: (msg: string) => Decision = () => ({ kind: 'proceed' })) {
+    const log = {
+      before: [] as { conversationId: string; callId?: string; userMessage: string }[],
+      after: [] as unknown[],
+      vapi: [] as { id: string; message: Record<string, unknown> }[],
+      disposed: false,
+    };
+    const session = {
+      beforeTurn: async (i: { conversationId: string; callId?: string; userMessage: string }) => {
+        log.before.push(i);
+        return decide(i.userMessage);
+      },
+      afterTurn: (...args: unknown[]) => void log.after.push(args),
+      handleVapiMessage: async (id: string, message: Record<string, unknown>) => void log.vapi.push({ id, message }),
+      dispose: () => void (log.disposed = true),
+    };
+    return { session: session as never, log };
+  }
+  const say = (text: string) =>
+    body({ messages: [{ role: 'user', content: text }] });
+
+  it('answers a closer itself: the agent is not run, the reply is spoken as normal', async () => {
+    const { session, log } = fakeSession((m) => (m === "that's all" ? { kind: 'reply', text: 'Goodbye.' } : { kind: 'proceed' }));
+    const { url, calls } = await start({ session });
+    const r = await fetch(`${url}/chat/completions`, { method: 'POST', headers: auth, body: say("that's all") });
+    expect((await r.json()).choices[0].message.content).toBe('Goodbye.');
+    expect(calls).toHaveLength(0);
+    expect(log.after).toHaveLength(0);
+    expect(log.before[0]).toEqual({ conversationId: 'vapi_call1', callId: 'call1', userMessage: "that's all" });
+  });
+
+  it('keeps the SSE contract for controller replies', async () => {
+    const { session } = fakeSession(() => ({ kind: 'reply', text: 'Goodbye.' }));
+    const { url } = await start({ session });
+    const r = await fetch(`${url}/chat/completions`, { method: 'POST', headers: auth, body: body({ stream: true }) });
+    const text = await r.text();
+    expect(text).toContain('Goodbye.');
+    expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true);
+  });
+
+  it('runs the agent for normal turns and reports the result back', async () => {
+    const { session, log } = fakeSession();
+    const { url, calls } = await start({ session });
+    await fetch(`${url}/chat/completions`, { method: 'POST', headers: auth, body: body() });
+    expect(calls).toHaveLength(1);
+    expect(log.after).toEqual([['vapi_call1', { response: 'echo: check TXN-9001' }]]);
+  });
+
+  it('reports a failed turn too, so silence is not held forever, and still answers safely', async () => {
+    const { session, log } = fakeSession();
+    const { url } = await start({
+      session,
+      runTurn: async () => {
+        throw new Error('boom');
+      },
+    });
+    const r = await fetch(`${url}/chat/completions`, { method: 'POST', headers: auth, body: body() });
+    expect((await r.json()).choices[0].message.content).toBe(SAFE_SPOKEN_ERROR);
+    expect(log.after).toEqual([['vapi_call1']]);
+  });
+
+  it('forwards Vapi speech and status messages to the controller', async () => {
+    const { session, log } = fakeSession();
+    const { url } = await start({ session, webhookSecret: 'whsec-12345678', db: {} as never });
+    const message = { type: 'speech-update', status: 'stopped', role: 'assistant', call: { id: 'call1' } };
+    const r = await fetch(`${url}/vapi/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-vapi-secret': 'whsec-12345678' },
+      body: JSON.stringify({ message }),
+    });
+    expect(r.status).toBe(200);
+    expect(log.vapi).toEqual([{ id: 'vapi_call1', message }]);
+  });
+
+  it('clears the controller timers when the server closes', async () => {
+    const { session, log } = fakeSession();
+    await start({ session });
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+    expect(log.disposed).toBe(true);
+  });
+});
+
 describe('other routes', () => {
   it('serves /health without auth and 404s unknown paths', async () => {
     const { url } = await start();

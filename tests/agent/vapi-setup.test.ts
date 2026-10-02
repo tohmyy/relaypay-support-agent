@@ -16,8 +16,12 @@ describe('vapi setup payloads', () => {
     expect(p.model).not.toHaveProperty('credentialId');
     expect(p.credentialIds).toEqual(['cred1']);
     expect(p.server).toEqual({ url: 'https://a.example.com/vapi/events', secret: 'whsec-12345678' });
-    expect(p.serverMessages).toEqual(['status-update', 'end-of-call-report']);
+    // speech-update feeds the Session Controller's silence detection.
+    expect(p.serverMessages).toEqual(['status-update', 'speech-update', 'end-of-call-report']);
     expect(Object.keys(p).sort()).toEqual(['credentialIds', 'model', 'server', 'serverMessages']);
+    // With a session limit, Vapi also gets a slightly longer backstop and a high silence timeout.
+    const limited = assistantPatch({ baseUrl: 'https://a.example.com', credentialId: 'c', webhookSecret: 'whsec-12345678', sessionMaxSeconds: 360 });
+    expect(limited).toMatchObject({ maxDurationSeconds: 370, silenceTimeoutSeconds: 600 });
     expect(assistantPatch({ baseUrl: 'https://a.example.com', credentialId: 'c', webhookSecret: 'whsec-12345678', firstMessage: 'Hi' }).firstMessage).toBe('Hi');
   });
 
