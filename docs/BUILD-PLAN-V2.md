@@ -2668,11 +2668,12 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 ## Human Support
 
 - [x] Escalation records via MCP `create_escalation` (Mode A)
-- [~] AI stops after handoff (Mode B; `HUMAN_HANDOFF=1`, signed-in customers only; built and tested offline, the live end-to-end check is still to do: `docs/HANDOFF.md`)
+- [~] AI offers a live text chat with a person at escalation, and stops after the customer chooses it (`HUMAN_HANDOFF=1`, signed-in customers only; built and tested offline, the live end-to-end check is still to do: `docs/HANDOFF.md`)
 - [x] Conversation remains active as DB row (`support_mode = human`)
-- [x] Staff workspace (queue, conversation page, claim, reply, close)
+- [x] Administrator setting for which ways of reaching a person are on (live text chat, callback; phone shown as not available yet)
+- [x] Staff workspace (live queue with unread marks and alerts, conversation page, claim, reply, return to queue, close, availability switch)
 - [x] Staff messaging
-- [~] Realtime updates (polling every 2 s through authorised routes, by design; no Supabase Realtime)
+- [~] Realtime updates (adaptive polling through authorised routes, by design; no Supabase Realtime)
 - [~] Staff profile/avatar (name, title and avatar URL shown; no avatar upload)
 - [x] Typing indicator (both directions, 5 s window)
 - [x] Staff conversation closure (`end_reason = human-closed`)

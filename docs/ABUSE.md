@@ -15,7 +15,7 @@ hold a session open for ever. Every limit is enforced **on the server**; the bro
 | Concurrent sessions | agent Session Controller; web link route answers early | 1 active voice session per signed-in customer |
 | Session creation rate | agent Session Controller; web link route answers early | 8 per hour per signed-in customer |
 | Global creation breaker | agent Session Controller | 60 new conversations per 10 minutes, anyone |
-| Text chat | web routes, shared limiter | 30 messages/minute/conversation (customer), 60 (staff), 40 typing signals |
+| Text chat | web routes, shared limiter | 30 messages/minute/conversation (customer), 60 (staff), 40 typing signals, 60 read signals, 12 presence updates |
 | Logging | `conversation_events`, `npm run report` | always |
 
 Set any of the three budgets, the concurrency limit or a rate to `0` to turn it off (`docs/ENVIRONMENT.md`). The defaults are
@@ -61,8 +61,9 @@ calls. The raw events are in `conversation_events` (`limit_reached`, `human_hand
 
 ## Known limits
 
-- **Anonymous callers on `/` cannot be limited per person.** The agent never sees the caller's address (it sits behind Vapi)
-  and the browser holds the public Vapi key, so only the global breaker and the per-call limits apply. Closing this needs a
+- **Calls that do not come through a signed-in page cannot be limited per person.** The agent never sees the caller's address
+  (it sits behind Vapi) and the Vapi public key is in the browser, so a call started directly against it is unlinked: only the
+  global breaker and the per-conversation budgets apply. Closing this needs a
   server-issued start token for each call or controls on the Vapi side; neither is built.
 - The web link check is a convenience: a customer who calls Vapi directly still meets the agent's checks on their first turn.
 - A very short call that never sends a turn is not stopped by the turn-time checks (it ends by silence or the time limit).

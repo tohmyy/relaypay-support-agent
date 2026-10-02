@@ -8,6 +8,8 @@ Supabase Postgres. Migrations are plain SQL in `supabase/migrations/` and are ap
 | `..._runtime_tables.sql` | `conversations`, `conversation_turns`, `retrieval_logs`, `tool_calls`, `support_tickets`, `escalations`, `evaluations` |
 | `..._app_users.sql` | `app_users` (sign-in accounts: email, scrypt hash, role, optional `customer_id`, display name, title, avatar, disabled flag) and `conversations.customer_id` / `user_id` (nullable; set when a signed-in customer's call is linked) |
 | `..._human_handoff.sql` | `conversations.support_mode` (`ai`/`human`/`ended`), `assigned_staff_id`, `staff_typing_at`, `customer_typing_at`; `conversation_turns.sender` (`customer`/`ai`/`staff`/`system`; null = a voice-era pair), `body`, `staff_user_id` (one message per row, `turn_number` null, ordered by `created_at`) |
+| `..._live_chat.sql` | `escalations.contact_preference` (`text_chat`/`callback`); `app_users.available`, `last_seen_at` (staff presence); `conversations.customer_last_read_at`, `staff_last_read_at`, `handoff_at`, `last_customer_message_at`, `last_staff_message_at`; `conversation_turns.client_msg_id` (unique with the conversation, so a retried message is stored once) |
+| `..._contact_methods.sql` | `app_settings` (`key`, `value` jsonb, `updated_at`, `updated_by`): administrator settings; `contact_methods` = `{"text_chat": bool, "callback": bool}`, no row = both on |
 | `..._abuse_limits.sql` | `limit-reached` added to the `end_reason` check; `rate_limits` counters and the `rate_limit_hit` / `rate_limit_reset` functions the web app uses (service role only) |
 | `..._indexes_and_access.sql` | lookup indexes; RLS enabled on all tables with no policies; `anon`/`authenticated` revoked |
 

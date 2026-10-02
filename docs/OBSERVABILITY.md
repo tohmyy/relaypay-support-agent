@@ -19,7 +19,7 @@ server log.
 | Retrievals | `retrieval_logs` (query with personal data masked, source titles, summary) | agent retrieval |
 | Tool calls | `tool_calls` (`tool_name`, **`purpose`**, `input_summary`, `result_summary`, `status`, `error`, **`duration_ms`**, timestamp, conversation id) | MCP server, for every call |
 | Tickets | `support_tickets` (conversation id) | MCP `create_support_ticket` |
-| Escalations | `escalations` (conversation id, ticket id, status, requested time) | MCP `create_escalation` |
+| Escalations | `escalations` (conversation id, ticket id, status, requested time, `contact_preference`: `text_chat` or `callback`) | MCP `create_escalation` |
 | Errors | `conversation_events` with `event_type = 'error'` and `{source, message}` (message masked and cut to 300 characters); `tool_calls` rows with `status = 'failed'`; JSON lines on stderr | agent (`agent.runTurn`, `vapi.webhook`), MCP |
 
 `timings` was added in V2 Iteration 3 (migration `20261002000009_turn_timings.sql`, nullable, no backfill). Apply it before

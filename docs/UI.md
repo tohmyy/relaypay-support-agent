@@ -96,10 +96,10 @@ it moves to the confirmation only after the form is submitted. A full accessibil
 
 ## Signed-in area (Iterations 6 and 7)
 
-`/` stays the pure support console (anonymous, unchanged). The RelayPay shell is a separate area with its own routes:
+There is no public page: `/` redirects to `/login`, or to the signed-in person's own area. The RelayPay shell has its own routes:
 customers use `/dashboard`, `/payments`, `/payouts`, `/invoices`, `/support`, `/settings`; staff use `/staff`.
 This resolves the tension with `docs/UI-SPEC.md` section 6 (the support experience should not feel like a multi-page SaaS
-dashboard): the console itself is not turned into a dashboard, and the dashboard pages only link into it.
+dashboard): the voice console itself is not turned into a dashboard, and the dashboard pages only link into it.
 `/support` renders the same voice experience inside the shell (without its own header) and ties each real call to the
 signed-in customer. Customer wording lives in `lib/shell-copy.ts` (`SHELL_COPY`, held to the same vocabulary rule as
 `COPY`); staff wording is kept in `STAFF_COPY` in the same file. See `docs/AUTH.md`.

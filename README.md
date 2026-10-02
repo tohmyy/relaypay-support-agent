@@ -52,7 +52,8 @@ Other scripts: `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
 
 ## Voice UI
 
-`npm run dev`, then open `/` (or `/?mock=1` for a preview without a microphone). See `docs/UI.md`.
+`npm run dev`, then open `/`: it sends you to sign-in (`npm run db:seed-users` creates the demo accounts), and a customer calls from
+`/support` (or `/support?mock=1` for a preview without a microphone). See `docs/UI.md`, `docs/AUTH.md` and `docs/HANDOFF.md`.
 
 ## Observability
 

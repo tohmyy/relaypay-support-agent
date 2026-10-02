@@ -1,7 +1,8 @@
 # Authentication and authorization
 
-Build Plan V2, Iterations 6 and 7. Beyond the PRD minimum: the public voice page (`/`) is unchanged and still needs no
-account. This adds accounts, a customer area and a staff area around it.
+Build Plan V2, Iterations 6 and 7. Beyond the PRD minimum. There is no public page: `/` redirects to `/login`, or to the
+signed-in person's own area (`proxy.ts` from the cookie, and `app/page.tsx` again from the real session). Accounts give a
+customer area and a staff area, and every voice call is made by a signed-in customer on `/support`.
 
 ## What it is
 
@@ -13,7 +14,7 @@ authorised server routes instead of Supabase Realtime.
 |---|---|---|
 | `customer` | `/dashboard` | Their own payments, payouts, invoices, profile and past conversations |
 | `support_agent` | `/staff` | The queue and conversations that are open or escalated |
-| `support_admin` | `/staff` | Everything the agent sees, plus resolved conversations |
+| `support_admin` | `/staff` | Everything the agent sees, plus resolved conversations, and the **Settings** page (`/staff/settings`) where the ways of reaching a person are switched on and off (`docs/HANDOFF.md`) |
 
 Routes: customers use `/dashboard`, `/payments`, `/payouts`, `/invoices`, `/support`, `/support/<conversation id>`
 and `/settings`. Staff use `/staff`, `/staff/conversations` and `/staff/conversations/<id>`. Staff pages are read-only
@@ -60,7 +61,8 @@ Preview mode never links.
 
 The public state API (`/api/conversations/<id>/state`) follows the link: a **linked** conversation is readable only by
 its owner and by staff, and everyone else receives the same neutral snapshot as for an unknown id, so ids cannot be
-probed. An **unlinked** conversation behaves exactly as before, so the anonymous `/` page is unaffected.
+probed. An **unlinked** conversation (for example a call started straight against Vapi's public key, or before the link lands) is
+readable by its id, as before.
 
 ## Known limits
 
@@ -72,7 +74,8 @@ probed. An **unlinked** conversation behaves exactly as before, so the anonymous
 - Sign-in attempts are limited (5 per 15 minutes per email and address) by a counter kept in Postgres (`rate_limit_hit`,
   `docs/ABUSE.md`), so the limit holds across server instances and restarts. If the database cannot be reached the
   in-memory counter is used instead (per instance, reset on restart).
-- `/` is still anonymous, and the Vapi public key is still public; closing that is abuse hardening, not this round.
+- The Vapi public key is still public: someone can start a call against it without going through the site, and that call
+  is unlinked (so it cannot be offered the chat and only the agent's global limits apply). See `docs/ABUSE.md`.
 - The first seconds of a signed-in call are unlinked, until the browser has the call id and the link request lands.
 - No password change or reset, no multi-factor sign-in, no avatar upload. Accounts come from `db:seed-users`.
 - The live link and ownership behaviour during a real call has not been exercised (no Vapi credits at the time of
