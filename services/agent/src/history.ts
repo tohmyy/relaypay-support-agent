@@ -79,11 +79,20 @@ export async function saveTurn(
     cost_usd: t.costUsd ?? null,
   });
   fail('save turn', error);
+  const activity = new Date().toISOString();
   if (t.escalationCreated) {
     const res = await db
       .from('conversations')
-      .update({ final_status: 'escalated' })
+      .update({ final_status: 'escalated', last_activity_at: activity })
       .eq('conversation_id', t.conversationId);
     fail('mark conversation escalated', res.error);
+  } else {
+    // Best effort and off the reply path: a failed activity stamp must not fail the turn.
+    void Promise.resolve(
+      db
+        .from('conversations')
+        .update({ last_activity_at: activity })
+        .eq('conversation_id', t.conversationId),
+    ).catch(() => undefined);
   }
 }

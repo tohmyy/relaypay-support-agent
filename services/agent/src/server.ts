@@ -3,8 +3,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TurnInput, TurnResult } from './agent';
 import { errorMessage, logEvent } from './logger';
+import type { SessionController } from './session/controller';
 import {
   completionJson,
+  extractCallId,
   extractUserMessage,
   handleVapiEvent,
   resolveFromChatBody,
@@ -25,6 +27,8 @@ export interface AgentServerOptions {
   db?: SupabaseClient;
   /** Speak a short filler if the reply takes longer than this. */
   fillerAfterMs?: number;
+  /** Session limits, silence and "that's all" handling. Absent means turns run unconditionally (tests, scripts). */
+  session?: SessionController;
 }
 
 function sameSecret(provided: string | undefined, expected: string): boolean {
@@ -83,11 +87,28 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     return next;
   }
 
-  async function answer(conversationId: string, userMessage: string): Promise<string> {
+  async function answer(
+    conversationId: string,
+    userMessage: string,
+    callId?: string,
+  ): Promise<string> {
+    const session = opts.session;
     try {
-      const r = await serialized(conversationId, () =>
-        opts.runTurn({ conversationId, userMessage }),
-      );
+      const r = await serialized(conversationId, async () => {
+        // Deterministic session control first: time limit, "that's all", an ended call. No model call for these.
+        const decision = session
+          ? await session.beforeTurn({ conversationId, callId, userMessage })
+          : ({ kind: 'proceed' } as const);
+        if (decision.kind === 'reply') return { response: decision.text };
+        try {
+          const result = await opts.runTurn({ conversationId, userMessage });
+          session?.afterTurn(conversationId, result);
+          return result;
+        } catch (error) {
+          session?.afterTurn(conversationId);
+          throw error;
+        }
+      });
       return r.response;
     } catch (error) {
       logTechnical('runTurn failed', error, conversationId);
@@ -123,9 +144,14 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       return sendJson(res, 400, { error: 'conversation id required' });
     }
 
+    const callId = extractCallId(body);
     const id = `chatcmpl-${randomUUID()}`;
     if (body.stream !== true) {
-      return sendJson(res, 200, completionJson(id, await answer(conversationId, userMessage)));
+      return sendJson(
+        res,
+        200,
+        completionJson(id, await answer(conversationId, userMessage, callId)),
+      );
     }
 
     res.writeHead(200, {
@@ -139,7 +165,7 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     write(sseChunk(id, { role: 'assistant' }));
     // Stay audible on slow turns; the filler is transport only and is never stored as the answer.
     const timer = setTimeout(() => write(sseChunk(id, { content: SLOW_FILLER })), fillerAfter);
-    const text = await answer(conversationId, userMessage);
+    const text = await answer(conversationId, userMessage, callId);
     clearTimeout(timer);
     write(sseChunk(id, { content: text }));
     write(sseChunk(id, {}, 'stop'));
@@ -160,14 +186,18 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       return sendJson(res, 400, { error: 'invalid JSON' });
     }
     try {
-      await handleVapiEvent(opts.db, payload);
+      const result = await handleVapiEvent(opts.db, payload);
+      const message = (payload as { message?: Record<string, unknown> } | null)?.message;
+      if (opts.session && result.conversationId && message) {
+        await opts.session.handleVapiMessage(result.conversationId, message);
+      }
     } catch (error) {
       logTechnical('vapi event', error);
     }
     sendJson(res, 200, { ok: true });
   }
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     try {
       const path = (req.url ?? '').split('?')[0];
       if (req.method === 'GET' && path === '/health') return sendJson(res, 200, { ok: true });
@@ -194,4 +224,6 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       else res.end();
     }
   });
+  server.on('close', () => opts.session?.dispose());
+  return server;
 }

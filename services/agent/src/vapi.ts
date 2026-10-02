@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ensureConversation } from './history';
 import { callEndedMetadata, recordError } from './observability';
+import { endReasonFromVapi } from './session/end-reason';
+import { endConversation } from './session/persist';
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const MAX_SUMMARY_CHARS = 1000;
@@ -64,6 +66,11 @@ export function resolveConversationId(input: {
   const callId = clean(input.call?.id);
   if (callId) return `vapi_${callId}`.slice(0, 64);
   return clean(Array.isArray(input.header) ? input.header[0] : input.header);
+}
+
+/** Vapi's own call id from a chat body, when present (used to hang up the call). */
+export function extractCallId(body: ChatBody): string | undefined {
+  return clean(body.call?.id);
 }
 
 export function resolveFromChatBody(body: ChatBody, header?: string | string[]) {
@@ -145,30 +152,15 @@ async function handleResolved(
 
   if (message.type === 'end-of-call-report') {
     await ensureConversation(db, conversationId);
-    const [conv, turns] = await Promise.all([
-      db.from('conversations').select('final_status').eq('conversation_id', conversationId),
-      db.from('conversation_turns').select('turn_number').eq('conversation_id', conversationId),
-    ]);
-    if (conv.error) throw new Error(`load conversation: ${conv.error.message}`);
-    if (turns.error) throw new Error(`load turns: ${turns.error.message}`);
-    const existing = conv.data?.[0]?.final_status as string | null | undefined;
-    const finalStatus =
-      existing === 'escalated'
-        ? 'escalated'
-        : (turns.data ?? []).length > 0
-          ? 'resolved'
-          : 'abandoned';
     const summary =
       typeof message.summary === 'string' ? message.summary.slice(0, MAX_SUMMARY_CHARS) : undefined;
-    const { error } = await db
-      .from('conversations')
-      .update({
-        ended_at: new Date().toISOString(),
-        final_status: finalStatus,
-        ...(summary ? { summary } : {}),
-      })
-      .eq('conversation_id', conversationId);
-    if (error) throw new Error(`end conversation: ${error.message}`);
+    // First reason wins: a controller-initiated end (silence, time limit, "that's all") is already recorded.
+    const { finalStatus } = await endConversation(
+      db,
+      conversationId,
+      endReasonFromVapi(message.endedReason) ?? null,
+      { summary },
+    );
     // How the call ended: whitelisted fields only, nothing from the transcript.
     const ended = await db.from('conversation_events').insert({
       conversation_id: conversationId,
@@ -179,6 +171,9 @@ async function handleResolved(
     if (ended.error) throw new Error(`record call end: ${ended.error.message}`);
     return { handled: true, conversationId, finalStatus };
   }
+
+  // speech-update carries no state of its own; the Session Controller consumes it (server.ts).
+  if (message.type === 'speech-update') return { handled: true, conversationId };
 
   return { handled: false, conversationId };
 }

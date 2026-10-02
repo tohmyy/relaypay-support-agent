@@ -15,6 +15,13 @@ const schema = z.object({
   AGENT_PORT: z.preprocess(blank, z.coerce.number().int().min(0).max(65535).default(4100)),
   AGENT_HOST: z.preprocess(blank, z.string().default('127.0.0.1')),
   AGENT_PUBLIC_URL: z.preprocess(blank, z.string().url().optional()),
+  // Session lifecycle (seconds). Enforced by the Session Controller, never by the model.
+  SESSION_MAX_SECONDS: z.preprocess(blank, z.coerce.number().int().min(10).default(360)),
+  SESSION_WARNING_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(30)),
+  SILENCE_TIMEOUT_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(15)),
+  SILENCE_COUNTDOWN_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
+  // Private Vapi API key, used only to end a live call from the server.
+  VAPI_API_KEY: z.preprocess(blank, z.string().min(1).optional()),
   // Optional model override; blank means the default model is used.
   AGENT_MODEL: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional()),
 });
