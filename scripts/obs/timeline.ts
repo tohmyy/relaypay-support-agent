@@ -1,4 +1,5 @@
 import { redactPii } from '../../services/agent/src/redact';
+import { describeTimings } from './segments';
 
 export interface TimelineInput {
   conversation: {
@@ -15,6 +16,8 @@ export interface TimelineInput {
     answer_type: string | null;
     latency_ms: number | null;
     cost_usd: number | string | null;
+    /** Where the turn's time went (segments); absent on turns from before they were recorded. */
+    timings?: unknown;
     created_at: string;
   }[];
   retrievals: { query: string | null; source_titles: unknown; created_at: string }[];
@@ -114,10 +117,11 @@ export function buildTimeline(input: TimelineInput): TimelineEntry[] {
     const bits = [t.answer_type ?? 'unknown'];
     if (t.latency_ms != null) bits.push(`${(t.latency_ms / 1000).toFixed(1)}s`);
     if (t.cost_usd != null) bits.push(`$${Number(t.cost_usd).toFixed(3)}`);
+    const breakdown = describeTimings(t.timings);
     out.push({
       at: t.created_at,
       kind: 'agent',
-      text: `(${bits.join(', ')}) "${clip(t.assistant_response, 240)}"`,
+      text: `(${bits.join(', ')}) "${clip(t.assistant_response, 240)}"${breakdown ? ` [${breakdown}]` : ''}`,
     });
   }
 

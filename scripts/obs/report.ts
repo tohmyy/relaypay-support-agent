@@ -27,12 +27,12 @@ try {
       'select final_status, ended_at from conversations where created_at >= $1',
     ),
     turns: await q(
-      'select answer_type, latency_ms, cost_usd from conversation_turns where created_at >= $1',
+      'select answer_type, latency_ms, cost_usd, timings from conversation_turns where created_at >= $1',
     ),
     toolCalls: await q(
       'select tool_name, status, duration_ms from tool_calls where created_at >= $1',
     ),
-    events: await q('select event_type from conversation_events where created_at >= $1'),
+    events: await q('select event_type, metadata from conversation_events where created_at >= $1'),
     tickets: Number(
       (await q('select count(*)::int n from support_tickets where created_at >= $1'))[0].n,
     ),

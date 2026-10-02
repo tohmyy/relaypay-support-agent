@@ -42,7 +42,7 @@ try {
     conversation: conversation ? toIso(conversation) : null,
     turns: await rows(
       'conversation_turns',
-      'turn_number, user_transcript, assistant_response, answer_type, latency_ms, cost_usd, created_at',
+      'turn_number, user_transcript, assistant_response, answer_type, latency_ms, cost_usd, timings, created_at',
       'turn_number',
     ),
     retrievals: await rows('retrieval_logs', 'query, source_titles, created_at'),
