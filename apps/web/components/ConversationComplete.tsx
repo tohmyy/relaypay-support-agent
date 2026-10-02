@@ -21,7 +21,9 @@ export default function ConversationComplete({ ticketReference, escalated, endRe
       ? COPY.session.endedBodySilence
       : endReason === 'session-timeout'
         ? COPY.session.endedBodyTimeout
-        : null;
+        : endReason === 'limit-reached'
+          ? COPY.session.endedBodyLimit
+          : null;
   return (
     <section aria-labelledby="complete-heading" className="rounded-lg border border-line bg-surface p-6 text-center shadow-card">
       <h2 id="complete-heading" className="text-xl font-semibold text-ink">

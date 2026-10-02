@@ -4,7 +4,13 @@ import type { StatusTone } from '@/lib/dashboard/format';
 import { STAFF_COPY } from '@/lib/shell-copy';
 import { DataTable, EmptyState, StatusBadge } from './ui';
 
-const TONES: Record<QueueState, StatusTone> = { escalated: 'danger', waiting: 'warning', open: 'neutral', resolved: 'success' };
+const TONES: Record<QueueState, StatusTone> = {
+  escalated: 'danger',
+  waiting: 'warning',
+  'in-progress': 'neutral',
+  open: 'neutral',
+  resolved: 'success',
+};
 
 /** Conversations as a table; the customer cell links to the read-only conversation page. */
 export default function QueueTable({ items, caption }: { items: QueueItem[]; caption: string }) {

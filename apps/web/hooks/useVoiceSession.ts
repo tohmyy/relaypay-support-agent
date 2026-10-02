@@ -143,6 +143,12 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     void refresh();
   }, [refresh]);
 
+  // The conversation moved to a support specialist: the voice call is over for this page too. The server hangs it up;
+  // this covers the moment before that reaches the browser, and a hang-up that failed.
+  useEffect(() => {
+    if (backend.supportMode === 'human' && isActive(voice.state)) void hangUp();
+  }, [backend.supportMode, voice.state, hangUp]);
+
   /** The customer's own "End conversation": never reported as silence or a time limit. */
   const end = useCallback(async () => {
     if (isActive(stateRef.current)) endedByCustomer.current = true;

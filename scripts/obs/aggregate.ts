@@ -1,16 +1,25 @@
 import { readTimings, SEGMENTS, TOTALS } from './segments';
 
 export interface ReportInput {
-  conversations: { final_status: string | null; ended_at: string | null }[];
+  conversations: {
+    final_status: string | null;
+    ended_at: string | null;
+    /** Present when the report is asked for abuse figures (migration 20261002000010 and later). */
+    conversation_id?: string;
+    customer_id?: string | null;
+    end_reason?: string | null;
+    support_mode?: string | null;
+  }[];
   turns: {
+    conversation_id?: string;
     answer_type: string | null;
     latency_ms: number | null;
     cost_usd: number | string | null;
     /** Segment timings (conversation_turns.timings); absent on turns from before they were recorded. */
     timings?: unknown;
   }[];
-  toolCalls: { tool_name: string | null; status: string | null; duration_ms: number | null }[];
-  events: { event_type: string; metadata?: unknown }[];
+  toolCalls: { conversation_id?: string; tool_name: string | null; status: string | null; duration_ms: number | null }[];
+  events: { conversation_id?: string; event_type: string; metadata?: unknown }[];
   tickets: number;
   escalations: number;
 }
@@ -29,6 +38,7 @@ export interface Report {
   escalations: number;
   latency: LatencyReport;
   voice: VoiceReport;
+  abuse: AbuseReport;
   /** Averages per conversation (Build Plan V2 section 86). */
   perConversation: { turns: number | null; toolCalls: number | null };
 }
@@ -46,6 +56,21 @@ export interface VoiceReport {
   /** The same, counted from turn timings (turns that record whether the reply was delivered). */
   undeliveredTurns: number;
   deliveryTrackedTurns: number;
+}
+
+/** Limits that stopped a session, hand-overs to staff, and the heaviest users of the system (Build Plan V2 section 70). */
+export interface AbuseReport {
+  /** `limit_reached` events by kind (agent_calls, tool_calls, retrievals, concurrent_sessions, session_rate, ...). */
+  limitEvents: Record<string, number>;
+  /** Conversations that ended with the limit-reached reason. */
+  limitEnded: number;
+  /** Moves to a support specialist, by reason (escalation, limit-reached). */
+  handoffs: { total: number; byReason: Record<string, number> };
+  humanClosed: number;
+  /** Signed-in customers with two or more sessions in the period, most first. */
+  topCustomers: { customerId: string; sessions: number }[];
+  /** The conversations that used the most model turns and tool calls. */
+  heaviest: { conversationId: string; turns: number; toolCalls: number }[];
 }
 
 export interface SegmentStats {
@@ -178,6 +203,48 @@ function buildVoice(input: ReportInput): VoiceReport {
   return out;
 }
 
+const meta = (e: { metadata?: unknown }) =>
+  (e.metadata && typeof e.metadata === 'object' ? e.metadata : {}) as Record<string, unknown>;
+
+function buildAbuse(input: ReportInput): AbuseReport {
+  const limitEvents = tally(
+    input.events.filter((e) => e.event_type === 'limit_reached'),
+    (e) => (typeof meta(e).kind === 'string' ? (meta(e).kind as string) : 'unknown'),
+  );
+  const handoffEvents = input.events.filter((e) => e.event_type === 'human_handoff');
+  const bySession = new Map<string, number>();
+  for (const c of input.conversations) {
+    if (c.customer_id) bySession.set(c.customer_id, (bySession.get(c.customer_id) ?? 0) + 1);
+  }
+  const usage = new Map<string, { turns: number; toolCalls: number }>();
+  const bump = (id: string | undefined, key: 'turns' | 'toolCalls') => {
+    if (!id) return;
+    const row = usage.get(id) ?? { turns: 0, toolCalls: 0 };
+    row[key]++;
+    usage.set(id, row);
+  };
+  for (const t of input.turns) bump(t.conversation_id, 'turns');
+  for (const c of input.toolCalls) bump(c.conversation_id, 'toolCalls');
+  return {
+    limitEvents,
+    limitEnded: input.conversations.filter((c) => c.end_reason === 'limit-reached').length,
+    handoffs: {
+      total: handoffEvents.length,
+      byReason: tally(handoffEvents, (e) => (typeof meta(e).reason === 'string' ? (meta(e).reason as string) : 'unknown')),
+    },
+    humanClosed: input.conversations.filter((c) => c.end_reason === 'human-closed').length,
+    topCustomers: [...bySession.entries()]
+      .filter(([, sessions]) => sessions >= 2)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([customerId, sessions]) => ({ customerId, sessions })),
+    heaviest: [...usage.entries()]
+      .sort((a, b) => b[1].turns + b[1].toolCalls - (a[1].turns + a[1].toolCalls) || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([conversationId, u]) => ({ conversationId, ...u })),
+  };
+}
+
 export function buildReport(input: ReportInput): Report {
   const latencies = input.turns
     .map((t) => t.latency_ms)
@@ -223,6 +290,7 @@ export function buildReport(input: ReportInput): Report {
     escalations: input.escalations,
     latency: buildLatency(input),
     voice: buildVoice(input),
+    abuse: buildAbuse(input),
     perConversation: {
       turns: input.conversations.length
         ? Math.round((input.turns.length / input.conversations.length) * 10) / 10
@@ -256,6 +324,24 @@ function formatVoice(v: VoiceReport): string[] {
   return lines;
 }
 
+function formatAbuse(a: AbuseReport): string[] {
+  const quiet =
+    Object.keys(a.limitEvents).length === 0 && a.handoffs.total === 0 && a.limitEnded === 0 && a.topCustomers.length === 0;
+  if (quiet && a.heaviest.length === 0) return ['Limits and handoffs: nothing recorded yet'];
+  const lines = ['Limits and handoffs:'];
+  lines.push(`  limits reached: ${kv(a.limitEvents)}; sessions ended by a limit: ${a.limitEnded}`);
+  lines.push(`  moved to a specialist: ${a.handoffs.total} (${kv(a.handoffs.byReason)}); closed by staff: ${a.humanClosed}`);
+  if (a.topCustomers.length) {
+    lines.push(`  most sessions: ${a.topCustomers.map((c) => `${c.customerId} ${c.sessions}`).join(', ')}`);
+  }
+  if (a.heaviest.length) {
+    lines.push(
+      `  heaviest conversations: ${a.heaviest.map((h) => `${h.conversationId} (${h.turns} turns, ${h.toolCalls} tool calls)`).join(', ')}`,
+    );
+  }
+  return lines;
+}
+
 function formatLatency(l: LatencyReport): string[] {
   if (l.timedTurns === 0) return ['Latency breakdown: no timed turns yet (turns before segment timings were recorded have none)'];
   const label = (key: string) =>
@@ -285,6 +371,7 @@ export function formatReport(r: Report, label: string): string {
     `Reply time: p50 ${secs(r.latencyMs.p50)}, p95 ${secs(r.latencyMs.p95)}, max ${secs(r.latencyMs.max)} over ${r.latencyMs.count} timed turns`,
     ...formatLatency(r.latency),
     ...formatVoice(r.voice),
+    ...formatAbuse(r.abuse),
     `Per conversation: ${r.perConversation.turns ?? 'n/a'} turns, ${r.perConversation.toolCalls ?? 'n/a'} tool calls on average`,
     `Model cost estimate: $${r.costUsd.total.toFixed(4)}`,
     `Tickets: ${r.tickets}, escalations: ${r.escalations}`,
