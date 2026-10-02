@@ -46,6 +46,8 @@ export interface VoiceSession {
   session: SessionView;
   /** Why the session ended, once known (the recorded reason, or a provisional one while it is read). */
   endReason: PublicEndReason | null;
+  /** The current call's id once it has started (it stays after the call ends), otherwise null. */
+  conversationId: string | null;
   start(): Promise<void>;
   end(): Promise<void>;
   submitContact(details: ContactDetails): void;
@@ -195,5 +197,5 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
   const endReason =
     backend.endReason ?? (voice.state === 'ended' && !endedByCustomer.current ? provisionalEnd : null);
 
-  return { voice, support, turns, backend, level, session, endReason, start, end, submitContact };
+  return { voice, support, turns, backend, level, session, endReason, conversationId, start, end, submitContact };
 }
