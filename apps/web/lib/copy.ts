@@ -94,6 +94,21 @@ export const COPY = {
     ticketCreated: 'Your support request has been created.',
     escalationSent: 'Your request has been sent to RelayPay Support.',
   },
+  session: {
+    silenceHeading: 'No activity detected',
+    silenceCountdown: 'Ending conversation in {seconds} seconds...',
+    silenceCountdownOne: 'Ending conversation in 1 second...',
+    silenceHint: 'Say something to keep the conversation going.',
+    silenceScreenReader: 'No activity detected. The conversation will end soon. Say something to keep it going.',
+    warningHeading: 'Session ending soon',
+    warningBody: 'This support session will end in about {seconds} seconds.',
+    warningBodyOne: 'This support session will end in about 1 second.',
+    warningScreenReader: 'This support session will end in about 30 seconds.',
+    endedHeading: 'Session ended',
+    endedBodySilence: 'The conversation ended because there was no activity.',
+    endedBodyTimeout: 'This support session reached its time limit.',
+    endedNewConversation: 'You can start a new support conversation whenever you need help.',
+  },
   errors: {
     connection: {
       message: "We couldn't connect to RelayPay Support.",
@@ -116,6 +131,11 @@ export const COPY = {
   } satisfies Record<ErrorKind, { message: string; detail?: string; action: string }>,
   notConfigured: "Voice support isn't available right now. Please try again later.",
 };
+
+/** Fills `{seconds}` in a notice, using the singular string for one second. */
+export function withSeconds(template: string, one: string, seconds: number): string {
+  return seconds === 1 ? one : template.replace('{seconds}', String(seconds));
+}
 
 /** Words that must never reach a customer (checked by tests against every string above). */
 export const FORBIDDEN_CUSTOMER_TERMS = [

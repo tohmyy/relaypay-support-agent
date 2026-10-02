@@ -1,4 +1,4 @@
-import type { PublicConversationState } from '../conversation-state';
+import { NEUTRAL_STATE, type PublicConversationState } from '../conversation-state';
 
 /** Where the support request stands. Independent of the voice state. */
 export type SupportState =
@@ -17,12 +17,7 @@ export interface ClientFlags {
   contactSubmitted: boolean;
 }
 
-export const emptyBackendState: PublicConversationState = {
-  answerType: null,
-  ticketReference: null,
-  escalation: null,
-  ended: false,
-};
+export const emptyBackendState: PublicConversationState = NEUTRAL_STATE;
 
 /**
  * Pure mapping from what the backend recorded (plus two client flags) to the support state.
