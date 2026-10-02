@@ -29,6 +29,7 @@ const customer = (over: Partial<CurrentUser> = {}): CurrentUser => ({
   displayName: 'Amara Okafor',
   title: null,
   avatarUrl: null,
+  available: false,
   ...over,
 });
 const agent = customer({ id: 'u-9', role: 'support_agent', customerId: null });

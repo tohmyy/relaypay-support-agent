@@ -40,6 +40,8 @@ import InvoicesPage from '@/app/(customer)/invoices/page';
 import CustomerConversation from '@/app/(customer)/support/[conversationId]/page';
 import StaffConversation from '@/app/(staff)/staff/conversations/[conversationId]/page';
 import StaffQueuePage from '@/app/(staff)/staff/page';
+import { StaffInboxProvider } from '@/components/shell/StaffInbox';
+import { buildStaffQueueFor } from '@/lib/dashboard/staff';
 
 const user = (over: Partial<CurrentUser> = {}): CurrentUser => ({
   id: 'u-1',
@@ -49,6 +51,7 @@ const user = (over: Partial<CurrentUser> = {}): CurrentUser => ({
   displayName: 'Amara Okafor',
   title: null,
   avatarUrl: null,
+  available: false,
   ...over,
 });
 
@@ -158,19 +161,24 @@ describe('list pages', () => {
   });
 
   it('shows the staff queue with counts, hiding resolved rows from agents', async () => {
-    h.data.getStaffQueueRows.mockResolvedValue({
+    const rows = {
       conversations: [
         conv({ conversation_id: 'a', ended_at: null, final_status: null }),
         conv({ conversation_id: 'b', final_status: 'resolved', ended_at: new Date().toISOString() }),
       ],
       tickets: [],
       customers: [{ customer_id: 'CUS-1001', company_name: 'LagosLedger', contact_name: 'Amara' }],
-    });
-    h.requireStaff.mockResolvedValue(user({ role: 'support_agent', customerId: null }));
-    const agentView = await html(StaffQueuePage());
+    };
+    // The page is a thin view over the live inbox, which starts from what the layout read on the server.
+    const render = async (role: 'support_agent' | 'support_admin') => {
+      const viewer = user({ role, customerId: null });
+      h.requireStaff.mockResolvedValue(viewer);
+      const initial = buildStaffQueueFor(viewer, rows as never);
+      return renderToStaticMarkup(<StaffInboxProvider initial={initial}>{await StaffQueuePage()}</StaffInboxProvider>);
+    };
+    const agentView = await render('support_agent');
     expect(agentView).toContain('/staff/conversations/a');
     expect(agentView).not.toContain('/staff/conversations/b');
-    h.requireStaff.mockResolvedValue(user({ role: 'support_admin', customerId: null }));
-    expect(await html(StaffQueuePage())).toContain('/staff/conversations/b');
+    expect(await render('support_admin')).toContain('/staff/conversations/b');
   });
 });

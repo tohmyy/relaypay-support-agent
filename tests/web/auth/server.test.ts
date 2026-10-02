@@ -110,7 +110,7 @@ describe('data-access layer', () => {
 
   it('requireUser sends visitors to the login page with a way back', async () => {
     await expect(requireUser('/payments')).rejects.toThrow('REDIRECT:/login?next=%2Fpayments');
-    await expect(requireUser()).rejects.toThrow('REDIRECT:/login');
+    await expect(requireUser()).rejects.toThrow('REDIRECT:/login?signedout=1');
   });
 
   it('keeps each role in its own area', async () => {
@@ -277,15 +277,31 @@ describe('proxy', () => {
     expect(location(res)).toContain('/login');
   });
 
+  it('does not bounce someone the real check refused: a valid-looking cookie may still see the form', async () => {
+    const claims = { uid: 'u', role: 'customer', cid: 'CUS-1001' } as const;
+    expect((await run('/login?signedout=1', claims)).headers.get('location')).toBeNull();
+    expect((await run('/login?next=%2Fdashboard', claims)).headers.get('location')).toBeNull();
+    // ...while a plain visit to /login with a good cookie still goes to the right area.
+    expect(location(await run('/login', claims))).toBe('/dashboard');
+  });
+
   it('lets the login page through for visitors and declares a static matcher', async () => {
     expect((await run('/login')).headers.get('location')).toBeNull();
     const { config } = await import('@/proxy');
-    expect(config.matcher).toEqual(['/login', '/dashboard', '/payments', '/payouts', '/invoices', '/support/:path*', '/settings', '/staff/:path*']);
+    expect(config.matcher).toEqual(['/', '/login', '/dashboard', '/payments', '/payouts', '/invoices', '/support/:path*', '/settings', '/staff/:path*']);
   });
 
-  it('does not cover the public page or the APIs', async () => {
+  it('sends the root to sign-in, or to the right area when signed in', async () => {
+    expect(location(await run('/'))).toBe('/login');
+    expect(location(await run('/', { uid: 'u', role: 'customer', cid: 'CUS-1001' }))).toBe('/dashboard');
+    expect(location(await run('/', { uid: 's', role: 'support_agent' }))).toBe('/staff');
+    expect(location(await run('/', { uid: 'a', role: 'support_admin' }))).toBe('/staff');
+    expect(location(await run('/', { uid: 'u', role: 'customer', cid: 'CUS-1001' }, 'x'.repeat(40)))).toBe('/login');
+  });
+
+  it('does not cover the APIs or the developer pages', async () => {
     const { config } = await import('@/proxy');
-    for (const open of ['/', '/api/conversations/x/state', '/dev/states']) {
+    for (const open of ['/api/conversations/x/state', '/dev/states']) {
       expect(config.matcher.some((m) => m === open)).toBe(false);
     }
   });

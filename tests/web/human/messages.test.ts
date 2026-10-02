@@ -63,6 +63,7 @@ describe('message lists', () => {
     sender: 'customer',
     body: id,
     at,
+    clientId: null,
     author: null,
     ...over,
   });

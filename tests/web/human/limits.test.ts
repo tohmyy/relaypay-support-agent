@@ -43,6 +43,7 @@ const customer: CurrentUser = {
   displayName: 'Amara Okafor',
   title: null,
   avatarUrl: null,
+  available: false,
 };
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();

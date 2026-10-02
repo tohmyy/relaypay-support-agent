@@ -166,6 +166,7 @@ describe('public conversation state', () => {
       escalation: { requestedTime: 'Tuesday at 2' },
       ended: true,
       endReason: null,
+      escalationChannel: null,
       supportMode: 'ai',
       startedAt: null,
       serverTime: now.toISOString(),
@@ -202,9 +203,19 @@ describe('public conversation state', () => {
     });
     const s = toPublicState(dirty);
     expect(Object.keys(s).sort()).toEqual([
-      'answerType', 'endReason', 'ended', 'escalation', 'limits', 'serverTime', 'startedAt', 'supportMode', 'ticketReference',
+      'answerType', 'endReason', 'ended', 'escalation', 'escalationChannel', 'limits', 'serverTime', 'startedAt', 'supportMode', 'ticketReference',
     ]);
     expect(JSON.stringify(s)).not.toMatch(/a@b\.co|Ada|secret|CUS-1001|my email/);
+  });
+
+  it('reports how the customer chose to be helped, only when it is a known choice', () => {
+    const channel = (preference: unknown) =>
+      toPublicState(rows({ escalations: [{ preferred_time: null, contact_preference: preference as never }] })).escalationChannel;
+    expect(channel('text_chat')).toBe('text_chat');
+    expect(channel('callback')).toBe('callback');
+    expect(channel('smoke signal')).toBeNull();
+    expect(channel(null)).toBeNull();
+    expect(toPublicState(rows({})).escalationChannel).toBeNull();
   });
 
   it('validates conversation ids', () => {

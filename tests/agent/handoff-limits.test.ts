@@ -36,7 +36,7 @@ const conversation = (over: Row = {}): Row => ({
 });
 
 function setup(
-  opts: { config?: Partial<SessionConfig>; limits?: Partial<AbuseLimits>; rows?: Row[]; extra?: Record<string, Row[]> } = {},
+  opts: { methods?: () => Promise<{ textChat: boolean }>; config?: Partial<SessionConfig>; limits?: Partial<AbuseLimits>; rows?: Row[]; extra?: Record<string, Row[]> } = {},
 ) {
   const fake = fakeDb({ conversations: opts.rows ?? [conversation()], ...opts.extra });
   const control: VapiCallControl = { say: vi.fn(async () => true), endCall: vi.fn(async () => true) };
@@ -45,7 +45,7 @@ function setup(
     ...opts.config,
     limits: { ...NO_LIMITS, ...opts.limits },
   };
-  const session = new SessionController({ db: fake.db, control, config });
+  const session = new SessionController({ db: fake.db, control, config, methods: opts.methods });
   const msg = (type: string, extra: Row = {}) => session.handleVapiMessage(ID, { type, call: CALL, ...extra });
   const assistant = (status: 'started' | 'stopped') => msg('speech-update', { role: 'assistant', status });
   const turn = (userMessage = 'my payout failed') =>
@@ -70,7 +70,7 @@ describe('human handoff', () => {
     const s = setup();
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ answerType: 'escalation', escalated: true, escalationCreated: true });
+    s.used({ answerType: 'escalation', escalated: true, escalationCreated: true, escalationChannel: 'text_chat' });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(12_000); // past the 10s handoff fallback, before the 15s silence timer
@@ -78,11 +78,53 @@ describe('human handoff', () => {
     expect(s.control.endCall).not.toHaveBeenCalled();
   });
 
+  it('keeps the call for a callback, or when no choice was recorded, even though handoff is on', async () => {
+    for (const channel of ['callback', undefined] as const) {
+      const s = setup({ config: on });
+      await s.msg('status-update', { status: 'in-progress' });
+      await s.turn();
+      s.used({ answerType: 'escalation', escalated: true, escalationCreated: true, escalationChannel: channel });
+      await s.assistant('started');
+      await s.assistant('stopped');
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(s.conv().support_mode).toBe('ai');
+      expect(s.control.endCall).not.toHaveBeenCalled();
+      expect(s.events('human_handoff')).toHaveLength(0);
+    }
+  });
+
+  it('does not move anyone when an administrator has turned the text chat off, even if the model chose it', async () => {
+    const s = setup({ config: on, methods: async () => ({ textChat: false }) });
+    await s.msg('status-update', { status: 'in-progress' });
+    await s.turn();
+    s.used({ answerType: 'escalation', escalated: true, escalationCreated: true, escalationChannel: 'text_chat' });
+    await s.assistant('started');
+    await s.assistant('stopped');
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(s.conv().support_mode).toBe('ai');
+    expect(s.control.endCall).not.toHaveBeenCalled();
+    expect(s.events('human_handoff')).toHaveLength(0);
+  });
+
+  it('moves them when the setting allows it, or cannot be read', async () => {
+    for (const methods of [async () => ({ textChat: true }), async () => Promise.reject(new Error('down'))]) {
+      const s = setup({ config: on, methods });
+      await s.msg('status-update', { status: 'in-progress' });
+      await s.turn();
+      s.used({ answerType: 'escalation', escalated: true, escalationCreated: true, escalationChannel: 'text_chat' });
+      await vi.advanceTimersByTimeAsync(0);
+      await s.assistant('started');
+      await s.assistant('stopped');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.conv().support_mode).toBe('human');
+    }
+  });
+
   it('moves a signed-in customer to staff once the confirmation has been spoken, and keeps the conversation open', async () => {
     const s = setup({ config: on });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ answerType: 'escalation', escalated: true, escalationCreated: true });
+    s.used({ answerType: 'escalation', escalated: true, escalationCreated: true, escalationChannel: 'text_chat' });
     await vi.advanceTimersByTimeAsync(0);
     expect(s.conv().support_mode).toBe('ai'); // not yet: the customer is still hearing the reply
 
@@ -101,13 +143,14 @@ describe('human handoff', () => {
     expect(s.events('human_handoff')).toHaveLength(1);
     expect(s.events('session_ended')).toHaveLength(0);
     expect(s.events('voice_stats')).toHaveLength(1);
+    expect(s.conv().handoff_at).toBe(NOW.toISOString());
   });
 
   it('still hands over if the end of the speech is never reported', async () => {
     const s = setup({ config: on });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ escalationCreated: true, answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
     await vi.advanceTimersByTimeAsync(9_000);
     expect(s.conv().support_mode).toBe('ai');
     await vi.advanceTimersByTimeAsync(1_500);
@@ -119,7 +162,7 @@ describe('human handoff', () => {
     const s = setup({ config: on, rows: [conversation({ customer_id: null })] });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ escalationCreated: true, answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(12_000);
@@ -131,8 +174,8 @@ describe('human handoff', () => {
     const s = setup({ config: on });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ escalationCreated: true, answerType: 'escalation' });
-    s.used({ escalationCreated: true, answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
     await s.assistant('started');
     await s.assistant('stopped');
     await s.assistant('started');
@@ -147,7 +190,7 @@ describe('human handoff', () => {
     const s = setup({ config: on });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ escalationCreated: true, answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(0);
@@ -174,7 +217,7 @@ describe('human handoff', () => {
     const s = setup({ config: on });
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
-    s.used({ escalationCreated: true, answerType: 'escalation' });
+    s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
     await vi.advanceTimersByTimeAsync(0);
     s.failNext('conversations');
     await s.assistant('started');

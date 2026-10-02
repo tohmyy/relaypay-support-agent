@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, configure, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
@@ -21,6 +21,9 @@ vi.mock('@/hooks/useVoiceSession', async (importOriginal) => {
 import HumanSupport from '@/components/shell/HumanSupport';
 import StaffChat from '@/components/shell/StaffChat';
 import SupportPage from '@/components/SupportPage';
+
+// These tests poll over real timers; a loaded machine can take longer than the default second.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();
@@ -63,7 +66,7 @@ describe('HumanSupport', () => {
     const notice = message('1', 'system', "You're being connected to a support specialist.", '2026-10-03T12:00:00.000Z');
     const f = fakeFetch({
       [`GET ${BASE}/messages`]: [
-        { json: thread({ messages: [notice] }) },
+        { json: thread({ messages: [notice], waitingSince: new Date().toISOString(), staffOnline: true }) },
         {
           json: thread({
             messages: [message('2', 'staff', 'Hi Amara, I am on it.', '2026-10-03T12:00:05.000Z', { name: 'Sarah', title: 'Support Specialist', avatarUrl: null })],
@@ -72,20 +75,31 @@ describe('HumanSupport', () => {
           }),
         },
       ],
+      [`POST ${BASE}/read`]: { json: { ok: true } },
     });
     render(<HumanSupport conversationId="vapi_abc" />);
     expect(await screen.findByText("You're being connected to a support specialist.")).toBeTruthy();
-    expect(screen.getByText(/A specialist will join shortly/)).toBeTruthy();
+    expect(screen.getByText(/A specialist is online and will join you shortly/)).toBeTruthy();
     expect(screen.getByRole('log', { name: 'Conversation with a support specialist' })).toBeTruthy();
 
     expect(await screen.findByText('Hi Amara, I am on it.', {}, { timeout: 4000 })).toBeTruthy();
     expect(screen.getByText('Support Specialist')).toBeTruthy();
     expect(screen.getByRole('status').textContent).toContain('Sarah is typing…');
+    expect(screen.queryByText(/is online and will join/)).toBeNull();
     // The second poll asked only for what came after the first message.
     expect(f.calls.some((c) => c.url.includes('after=2026-10-03T12%3A00%3A00.000Z'))).toBe(true);
   });
 
-  it('sends a message, keeps it in the box if sending fails, and clears it on success', async () => {
+  it('says the team will reply when nobody is online, and offers a callback straight away', async () => {
+    fakeFetch({ [`GET ${BASE}/messages`]: { json: thread({ waitingSince: new Date().toISOString(), staffOnline: false }) } });
+    render(<HumanSupport conversationId="vapi_abc" />);
+    expect(await screen.findByText(/Our team will reply as soon as someone is free/)).toBeTruthy();
+    expect(screen.getByText(/Waiting for under a minute/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Request a callback instead' })).toBeTruthy();
+    expect(screen.queryByText(/Still waiting\?/)).toBeNull();
+  });
+
+  it('sends a message at once, and keeps it visible with a retry if it did not get through', async () => {
     const f = fakeFetch({
       [`GET ${BASE}/messages`]: { json: thread() },
       [`POST ${BASE}/messages`]: [{ status: 500, json: { error: 'unavailable' } }, { status: 201, json: { ok: true } }],
@@ -98,14 +112,19 @@ describe('HumanSupport', () => {
 
     await userEvent.type(box, 'Hello?');
     await userEvent.click(send);
-    expect((await screen.findByRole('alert')).textContent).toContain('could not be sent');
-    expect((box as HTMLTextAreaElement).value).toBe('Hello?');
+    // It is in the conversation straight away, and the box is free for the next message.
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    expect(await screen.findByText('Hello?')).toBeTruthy();
+    expect(await screen.findByText(/Not sent\./)).toBeTruthy();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(f.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/messages'))).toHaveLength(2));
     const sends = f.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/messages'));
-    expect(sends).toHaveLength(2);
-    expect(JSON.parse(sends[1].body as string)).toEqual({ body: 'Hello?' });
+    const [first, second] = sends.map((c) => JSON.parse(c.body as string) as { body: string; clientId: string });
+    expect(first.body).toBe('Hello?');
+    // The retry carries the same id, so a first attempt that did get through cannot be stored twice.
+    expect(second.clientId).toBe(first.clientId);
+    expect(first.clientId).toMatch(/^[0-9a-f-]{36}$/);
     // Typing was signalled, and not on every keystroke.
     expect(f.calls.filter((c) => c.url.endsWith('/typing')).length).toBe(1);
   });

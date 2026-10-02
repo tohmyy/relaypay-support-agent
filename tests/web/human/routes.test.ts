@@ -48,6 +48,7 @@ const user = (over: Partial<CurrentUser> = {}): CurrentUser => ({
   displayName: 'Amara Okafor',
   title: null,
   avatarUrl: null,
+  available: false,
   ...over,
 });
 const sarah = user({ id: 'u-9', role: 'support_agent', customerId: null, displayName: 'Sarah Adeyemi', title: 'Support Specialist' });
@@ -119,7 +120,17 @@ describe('customer messages', () => {
   });
 
   it('gives another customer, and an unknown id, the same empty answer', async () => {
-    const neutral = { supportMode: 'ai', ended: false, messages: [], staff: null, staffTyping: false };
+    const neutral = {
+      supportMode: 'ai',
+      ended: false,
+      messages: [],
+      staff: null,
+      staffTyping: false,
+      staffReadAt: null,
+      waitingSince: null,
+      staffOnline: false,
+      callbackAvailable: true,
+    };
     h.getCurrentUser.mockResolvedValue(user({ id: 'u-2', customerId: 'CUS-1002' }));
     h.getConversation.mockResolvedValue(humanRow());
     expect(await (await get(customerGet)).json()).toEqual(neutral);
@@ -134,7 +145,7 @@ describe('customer messages', () => {
     const res = await post(customerPost, { body: '  Hello?  ' });
     expect(res.status).toBe(201);
     expect(h.restPatch.mock.calls[0][1]).toBe('conversation_id=eq.vapi_abc&support_mode=eq.human&ended_at=is.null');
-    expect(h.restInsert).toHaveBeenCalledWith('conversation_turns', { conversation_id: 'vapi_abc', sender: 'customer', body: 'Hello?' });
+    expect(h.restInsert).toHaveBeenCalledWith('conversation_turns', { conversation_id: 'vapi_abc', sender: 'customer', body: 'Hello?' }, {});
     const patchOrder = h.restPatch.mock.invocationCallOrder[0];
     expect(patchOrder).toBeLessThan(h.restInsert.mock.invocationCallOrder[0]);
   });

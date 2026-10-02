@@ -156,6 +156,42 @@ describe('write tools', () => {
     expect(store.conversations.has('conv_ctx-1')).toBe(true);
   });
 
+  it('records how the customer chose to be helped, and words the summary for a text chat', async () => {
+    const chat = await run('create_escalation', {
+      user_name: 'A',
+      user_email: 'a@b.co',
+      category: 'payment',
+      reason: 'r',
+      contact_preference: 'text_chat',
+    });
+    expect(store.escalations[0]).toMatchObject({ contact_preference: 'text_chat' });
+    expect(JSON.stringify(chat)).toContain('text chat');
+    expect(JSON.stringify(chat)).not.toContain('contact details you provided');
+
+    const callback = await run('create_escalation', {
+      user_name: 'A',
+      user_email: 'a@b.co',
+      category: 'payment',
+      reason: 'r',
+      contact_preference: 'callback',
+    });
+    expect(JSON.stringify(callback)).toContain('contact details you provided');
+  });
+
+  it('refuses an unknown contact preference and treats it as optional', async () => {
+    expect(
+      await run('create_escalation', {
+        user_name: 'A',
+        user_email: 'a@b.co',
+        category: 'payment',
+        reason: 'r',
+        contact_preference: 'smoke_signal',
+      }),
+    ).toMatchObject({ error: { code: expect.any(String) } });
+    await run('create_escalation', { user_name: 'A', user_email: 'a@b.co', category: 'payment', reason: 'r' });
+    expect((store.escalations.at(-1) as { contact_preference?: string }).contact_preference).toBeUndefined();
+  });
+
   it('leaves conversation_id unset when the request carries none', async () => {
     await run('create_escalation', { user_name: 'A', user_email: 'a@b.co', category: 'account', reason: 'r' });
     expect(store.escalations[0]).toMatchObject({ conversation_id: undefined });
