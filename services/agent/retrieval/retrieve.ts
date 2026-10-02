@@ -19,6 +19,8 @@ export interface Retrieval {
   sourceTitles: string[];
   /** True when nothing relevant was found: decline or escalate instead of guessing. */
   empty: boolean;
+  /** Settles when the retrieval log row has been written (or has failed, which is only logged). Never rejects. */
+  logged: Promise<void>;
 }
 
 export interface RetrieveOptions {
@@ -49,8 +51,10 @@ export async function retrieveKnowledge(
   }
 
   const sourceTitles = chunks.map((c) => c.title);
-  await logRetrieval(db, { conversationId, query, chunks, sourceTitles });
-  return { chunks, sourceTitles, empty: chunks.length === 0 };
+  // Nothing in the answer needs the log row, so the caller does not wait for it. It still never throws, and `logged`
+  // lets a caller that cares (a test, a script) wait for it.
+  const logged = logRetrieval(db, { conversationId, query, chunks, sourceTitles });
+  return { chunks, sourceTitles, empty: chunks.length === 0, logged };
 }
 
 // Logging must never break an answer.

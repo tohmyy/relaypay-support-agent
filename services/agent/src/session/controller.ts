@@ -41,6 +41,8 @@ interface Session {
   formPending: boolean;
   assistantSpeaking: boolean;
   userSpeaking: boolean;
+  /** When the webhook said the customer stopped speaking; consumed by the next turn to estimate speech_to_agent_ms. */
+  userStoppedAt?: number;
   pendingEnd?: { reason: ConversationEndReason; sawSpeech: boolean };
   silenceTimer?: ReturnType<typeof setTimeout>;
   countdownTimer?: ReturnType<typeof setTimeout>;
@@ -74,6 +76,19 @@ export class SessionController {
   /** Phase of a conversation's session, for tests and diagnostics. */
   phaseOf(conversationId: string): SessionControlPhase | undefined {
     return this.sessions.get(conversationId)?.phase;
+  }
+
+  /**
+   * Milliseconds from the customer's last "stopped speaking" webhook to now, once. Approximate: the webhook itself
+   * takes time to arrive, and it is undefined when no recent speech event was seen.
+   */
+  consumeSpeechGapMs(conversationId: string): number | undefined {
+    const s = this.sessions.get(conversationId);
+    const at = s?.userStoppedAt;
+    if (!s || at === undefined) return undefined;
+    s.userStoppedAt = undefined;
+    const gap = Date.now() - at;
+    return gap >= 0 && gap < 60_000 ? gap : undefined;
   }
 
   dispose() {
@@ -275,6 +290,7 @@ export class SessionController {
       }
     } else {
       s.userSpeaking = started;
+      if (!started) s.userStoppedAt = Date.now();
     }
     if (started) this.cancelSilence(s);
     else this.armSilence(s);

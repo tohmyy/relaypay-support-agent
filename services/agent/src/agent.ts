@@ -2,12 +2,15 @@ import { readFileSync } from 'node:fs';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { retrieveKnowledge, type KbResult } from '../retrieval/retrieve';
+import { categoryForTool, type TurnProgress } from './acks';
 import { applyGuard } from './guard';
 import { recordError } from './observability';
 import { ensureConversation, loadHistory, saveTurn } from './history';
 import { buildPrompt, retrievalQuery } from './prompt';
 import { answerJsonSchema, parseAnswer, type AnswerType } from './schema';
 import { getSupabase } from './supabase';
+import { TurnTimer } from './timing';
+import type { WarmPool } from './warm';
 
 export const MCP_SERVER_NAME = 'relaypay';
 export const TOOL_NAMES = [
@@ -27,6 +30,10 @@ const SYSTEM_PROMPT = readFileSync(new URL('../prompts/system.md', import.meta.u
 export interface TurnInput {
   conversationId: string;
   userMessage: string;
+  /** Stopwatch for this turn, started when the request arrived. A turn run without one times itself. */
+  timer?: TurnTimer;
+  /** Lets the caller see what the turn is doing (a lookup, a ticket...) to choose a fitting acknowledgement. */
+  progress?: TurnProgress;
 }
 
 export interface TurnResult {
@@ -35,17 +42,29 @@ export interface TurnResult {
   sources: string[];
   toolsUsed: string[];
   escalated: boolean;
+  /** Number of the stored turn, so timings can be attached to it once the reply has gone out. */
+  turnNumber: number;
 }
 
 /** Everything external is injectable so tests can fake the model, database and retrieval. */
 export interface AgentDeps {
   query?: typeof sdkQuery;
   db?: SupabaseClient;
-  retrieve?: (q: string, o: { conversationId: string }) => Promise<{ chunks: KbResult[] }>;
+  retrieve?: (
+    q: string,
+    o: { conversationId: string },
+  ) => Promise<{ chunks: KbResult[]; logged?: Promise<void> }>;
+  /** Pre-started agent processes (optional). Without it every turn starts its own, exactly as before. */
+  warm?: Pick<WarmPool, 'take' | 'warm'>;
   mcpUrl?: string;
   mcpToken?: string;
   model?: string;
   systemPrompt?: string;
+}
+
+/** The options for a pre-started agent process for one conversation (same as a cold turn would use). */
+export function buildWarmOptions(conversationId: string, deps: AgentDeps = {}) {
+  return buildOptions({ ...resolveConfig(deps), conversationId });
 }
 
 /** The SDK options that keep the agent locked to the six MCP tools. Exported for tests. */
@@ -161,11 +180,18 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
   }
 
   async function handleTurn(): Promise<TurnResult> {
-    await ensureConversation(db, conversationId);
-    const history = await loadHistory(db, conversationId);
-    const knowledge = (
-      await retrieve(retrievalQuery(userMessage, history.turns), { conversationId })
-    ).chunks;
+    const timer = input.timer ?? new TurnTimer();
+    const progress = input.progress;
+
+    // The conversation row and the history reads do not depend on each other.
+    const [, history] = await timer.span('history_ms', () =>
+      Promise.all([ensureConversation(db, conversationId), loadHistory(db, conversationId)]),
+    );
+    const retrieval = await timer.span('retrieval_ms', () =>
+      retrieve(retrievalQuery(userMessage, history.turns), { conversationId }),
+    );
+    const knowledge = retrieval.chunks;
+    if (progress && knowledge.length > 0) progress.knowledge = true;
 
     const prompt = buildPrompt({
       conversationId,
@@ -184,44 +210,70 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
     let resultText: string | undefined;
     let costUsd: number | undefined;
 
-    for await (const message of query({
-      prompt,
-      options: buildOptions({ ...cfg, conversationId }),
-    })) {
-      const m = message as {
-        type?: string;
-        structured_output?: unknown;
-        result?: string;
-        is_error?: boolean;
-      };
-      if (m.type === 'assistant') {
-        for (const b of blocksOf(message)) {
-          // Skip the SDK's own StructuredOutput pseudo-tool; only report our MCP tools.
-          if (b.type === 'tool_use' && b.id && b.name?.startsWith(`mcp__${MCP_SERVER_NAME}__`)) {
-            const short = b.name.replace(`mcp__${MCP_SERVER_NAME}__`, '');
-            toolNames.set(b.id, short);
-            toolsUsed.push(short);
-          }
+    // Claimed only now, right before use, so an early failure above cannot strand a running process.
+    const warmed = await deps.warm?.take(conversationId);
+    timer.set('prewarmed', Boolean(warmed));
+    const stream = warmed
+      ? warmed.query(prompt)
+      : query({ prompt, options: buildOptions({ ...cfg, conversationId }) });
+    const loopStart = timer.time();
+    const toolStarts = new Map<string, number>();
+    let sawFirstMessage = false;
+
+    try {
+      for await (const message of stream) {
+        if (!sawFirstMessage) {
+          // Subprocess start and handshake (near zero when the process was pre-started).
+          sawFirstMessage = true;
+          timer.set('sdk_start_ms', timer.time() - loopStart);
         }
-      } else if (m.type === 'user') {
-        for (const b of blocksOf(message)) {
-          if (b.type !== 'tool_result' || !b.tool_use_id || b.is_error) continue;
-          const parsed = tryJson(toolResultText(b));
-          const name = toolNames.get(b.tool_use_id);
-          if (name === 'lookup_customer' && typeof parsed?.support_notes === 'string') {
-            internalTexts.push(parsed.support_notes);
+        const m = message as {
+          type?: string;
+          structured_output?: unknown;
+          result?: string;
+          is_error?: boolean;
+        };
+        if (m.type === 'assistant') {
+          for (const b of blocksOf(message)) {
+            // Skip the SDK's own StructuredOutput pseudo-tool; only report our MCP tools.
+            if (b.type === 'tool_use' && b.id && b.name?.startsWith(`mcp__${MCP_SERVER_NAME}__`)) {
+              const short = b.name.replace(`mcp__${MCP_SERVER_NAME}__`, '');
+              toolNames.set(b.id, short);
+              toolsUsed.push(short);
+              toolStarts.set(b.id, timer.time());
+              // What the model is really doing is the best cue for the acknowledgement.
+              if (progress) progress.toolCategory = categoryForTool(short) ?? progress.toolCategory;
+            }
           }
-          if (name === 'create_escalation' && typeof parsed?.escalation_id === 'string') {
-            escalationCreated = true;
+        } else if (m.type === 'user') {
+          for (const b of blocksOf(message)) {
+            if (b.type === 'tool_result' && b.tool_use_id && toolNames.has(b.tool_use_id)) {
+              const began = toolStarts.get(b.tool_use_id);
+              if (began !== undefined) timer.addTool(toolNames.get(b.tool_use_id)!, timer.time() - began);
+            }
+            if (b.type !== 'tool_result' || !b.tool_use_id || b.is_error) continue;
+            const parsed = tryJson(toolResultText(b));
+            const name = toolNames.get(b.tool_use_id);
+            if (name === 'lookup_customer' && typeof parsed?.support_notes === 'string') {
+              internalTexts.push(parsed.support_notes);
+            }
+            if (name === 'create_escalation' && typeof parsed?.escalation_id === 'string') {
+              escalationCreated = true;
+            }
           }
-        }
-      } else if (m.type === 'result') {
-        structured = m.structured_output;
-        resultText = m.result;
-        if (typeof (m as { total_cost_usd?: unknown }).total_cost_usd === 'number') {
-          costUsd = (m as { total_cost_usd: number }).total_cost_usd;
+        } else if (m.type === 'result') {
+          structured = m.structured_output;
+          resultText = m.result;
+          if (typeof (m as { total_cost_usd?: unknown }).total_cost_usd === 'number') {
+            costUsd = (m as { total_cost_usd: number }).total_cost_usd;
+          }
         }
       }
+    } finally {
+      timer.set('agent_ms', timer.time() - loopStart);
+      timer.finishAgent();
+      // Start the next turn's process now, while the customer listens to this reply and thinks.
+      deps.warm?.warm(conversationId);
     }
 
     const answer = parseAnswer(structured, resultText);
@@ -231,19 +283,23 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       internalTexts,
     });
 
-    await saveTurn(db, {
-      conversationId,
-      turnNumber: history.nextTurnNumber,
-      userMessage,
-      response: guarded.response,
-      answerType: guarded.answerType,
-      escalationCreated,
-      latencyMs: Date.now() - startedAt,
-      costUsd,
-      confidenceNote: guarded.leaked
-        ? 'output guard replaced a response that repeated internal notes'
-        : answer.confidence_note,
-    });
+    await timer.span('save_ms', () =>
+      saveTurn(db, {
+        conversationId,
+        turnNumber: history.nextTurnNumber,
+        userMessage,
+        response: guarded.response,
+        answerType: guarded.answerType,
+        escalationCreated,
+        latencyMs: Date.now() - startedAt,
+        costUsd,
+        confidenceNote: guarded.leaked
+          ? 'output guard replaced a response that repeated internal notes'
+          : answer.confidence_note,
+      }),
+    );
+    // The knowledge log was written while the model worked; make sure it has landed before the turn is over.
+    await retrieval.logged;
 
     return {
       response: guarded.response,
@@ -251,6 +307,7 @@ export async function runTurn(input: TurnInput, deps: AgentDeps = {}): Promise<T
       sources: knowledge.map((k) => k.title),
       toolsUsed,
       escalated: guarded.answerType === 'escalation' || escalationCreated,
+      turnNumber: history.nextTurnNumber,
     };
   }
 }

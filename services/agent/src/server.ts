@@ -1,9 +1,12 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { AckRotation, chooseAckCategory, type TurnProgress } from './acks';
 import type { TurnInput, TurnResult } from './agent';
+import { recordTurnTimings } from './history';
 import { errorMessage, logEvent } from './logger';
-import type { SessionController } from './session/controller';
+import type { SessionController, TurnDecision } from './session/controller';
+import { TurnTimer } from './timing';
 import {
   completionJson,
   extractCallId,
@@ -11,10 +14,10 @@ import {
   handleVapiEvent,
   resolveFromChatBody,
   SAFE_SPOKEN_ERROR,
-  SLOW_FILLER,
   SSE_DONE,
   sseChunk,
 } from './vapi';
+import type { WarmPool } from './warm';
 
 const MAX_BODY_BYTES = 256 * 1024;
 export const DEFAULT_FILLER_AFTER_MS = 2500;
@@ -25,10 +28,14 @@ export interface AgentServerOptions {
   webhookSecret?: string;
   runTurn: (input: TurnInput) => Promise<Pick<TurnResult, 'response'> & Partial<TurnResult>>;
   db?: SupabaseClient;
-  /** Speak a short filler if the reply takes longer than this. */
+  /** Speak a short acknowledgement if the reply takes longer than this. */
   fillerAfterMs?: number;
   /** Session limits, silence and "that's all" handling. Absent means turns run unconditionally (tests, scripts). */
   session?: SessionController;
+  /** Pre-started agent processes: warmed when a call starts, released when it ends. Absent means none. */
+  warm?: Pick<WarmPool, 'warm' | 'release' | 'dispose'>;
+  /** Phrase rotation for the spoken acknowledgements. Defaults to a fresh one. */
+  acks?: AckRotation;
 }
 
 function sameSecret(provided: string | undefined, expected: string): boolean {
@@ -67,6 +74,12 @@ function logTechnical(context: string, error: unknown, conversationId?: string) 
   logEvent('error', context, { conversation_id: conversationId, message: errorMessage(error) });
 }
 
+interface Answered {
+  text: string;
+  /** Stored turn number, when the agent ran (controller replies have none). */
+  turnNumber?: number;
+}
+
 /**
  * HTTP surface of the agent: the Vapi custom-LLM endpoint (POST /chat/completions) and the Vapi server-message
  * webhook (POST /vapi/events). Turns of one call run one at a time so interruptions cannot interleave.
@@ -74,6 +87,7 @@ function logTechnical(context: string, error: unknown, conversationId?: string) 
 export function createAgentServer(opts: AgentServerOptions): Server {
   const queues = new Map<string, Promise<unknown>>();
   const fillerAfter = opts.fillerAfterMs ?? DEFAULT_FILLER_AFTER_MS;
+  const acks = opts.acks ?? new AckRotation();
 
   function serialized<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
     const previous = queues.get(conversationId) ?? Promise.resolve();
@@ -90,18 +104,25 @@ export function createAgentServer(opts: AgentServerOptions): Server {
   async function answer(
     conversationId: string,
     userMessage: string,
-    callId?: string,
-  ): Promise<string> {
+    callId: string | undefined,
+    timer: TurnTimer,
+    progress: TurnProgress,
+  ): Promise<Answered> {
     const session = opts.session;
     try {
       const r = await serialized(conversationId, async () => {
+        // Time from the request arriving to this turn actually starting (it waits behind any earlier turn).
+        timer.set('queue_ms', timer.elapsed());
         // Deterministic session control first: time limit, "that's all", an ended call. No model call for these.
-        const decision = session
-          ? await session.beforeTurn({ conversationId, callId, userMessage })
-          : ({ kind: 'proceed' } as const);
-        if (decision.kind === 'reply') return { response: decision.text };
+        const decision: TurnDecision = session
+          ? await timer.span('controller_ms', () =>
+              session.beforeTurn({ conversationId, callId, userMessage }),
+            )
+          : { kind: 'proceed' };
+        if (decision.kind === 'reply')
+          return { response: decision.text } as Pick<TurnResult, 'response'> & Partial<TurnResult>;
         try {
-          const result = await opts.runTurn({ conversationId, userMessage });
+          const result = await opts.runTurn({ conversationId, userMessage, timer, progress });
           session?.afterTurn(conversationId, result);
           return result;
         } catch (error) {
@@ -109,14 +130,23 @@ export function createAgentServer(opts: AgentServerOptions): Server {
           throw error;
         }
       });
-      return r.response;
+      return { text: r.response, turnNumber: r.turnNumber };
     } catch (error) {
       logTechnical('runTurn failed', error, conversationId);
-      return SAFE_SPOKEN_ERROR;
+      return { text: SAFE_SPOKEN_ERROR };
     }
   }
 
+  /** Stores the finished turn's timings. After the reply has gone out; never awaited; a failure only logs. */
+  function persistTimings(conversationId: string, answered: Answered, timer: TurnTimer) {
+    timer.set('total_turn_ms', timer.elapsed());
+    if (!opts.db || answered.turnNumber === undefined) return;
+    void recordTurnTimings(opts.db, conversationId, answered.turnNumber, timer.toJSON());
+  }
+
   async function chatCompletions(req: IncomingMessage, res: ServerResponse) {
+    // Started the moment the request arrives, so every segment below is measured from the same zero.
+    const timer = new TurnTimer();
     let body: Record<string, unknown>;
     try {
       body = (await readJson(req)) as Record<string, unknown>;
@@ -145,13 +175,16 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     }
 
     const callId = extractCallId(body);
+    const progress: TurnProgress = {};
+    const speechGap = opts.session?.consumeSpeechGapMs(conversationId);
+    if (speechGap !== undefined) timer.set('speech_to_agent_ms', speechGap);
     const id = `chatcmpl-${randomUUID()}`;
     if (body.stream !== true) {
-      return sendJson(
-        res,
-        200,
-        completionJson(id, await answer(conversationId, userMessage, callId)),
-      );
+      const answered = await answer(conversationId, userMessage, callId, timer, progress);
+      timer.set('first_write_ms', timer.elapsed());
+      sendJson(res, 200, completionJson(id, answered.text));
+      persistTimings(conversationId, answered, timer);
+      return;
     }
 
     res.writeHead(200, {
@@ -162,15 +195,29 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     const write = (s: string) => {
       if (!res.writableEnded && !res.destroyed) res.write(s);
     };
+    /** Content is what Vapi speaks, so the first one is the server-side stand-in for "time to first audio". */
+    const speak = (text: string, at: number = timer.elapsed()) => {
+      if (timer.get('first_write_ms') === undefined) timer.set('first_write_ms', at);
+      write(sseChunk(id, { content: text }));
+    };
     write(sseChunk(id, { role: 'assistant' }));
-    // Stay audible on slow turns; the filler is transport only and is never stored as the answer.
-    const timer = setTimeout(() => write(sseChunk(id, { content: SLOW_FILLER })), fillerAfter);
-    const text = await answer(conversationId, userMessage, callId);
-    clearTimeout(timer);
-    write(sseChunk(id, { content: text }));
+    // Stay audible on slow turns. The acknowledgement fits what the turn is doing, comes from a fixed library, is
+    // transport only and is never stored as the answer.
+    const ackTimer = setTimeout(() => {
+      const category = chooseAckCategory(progress, userMessage);
+      // One instant for both: when the acknowledgement is the first thing written, it *is* the first write.
+      const at = timer.elapsed();
+      timer.set('ack_ms', at);
+      timer.set('ack_category', category);
+      speak(acks.pick(conversationId, category), at);
+    }, fillerAfter);
+    const answered = await answer(conversationId, userMessage, callId, timer, progress);
+    clearTimeout(ackTimer);
+    speak(answered.text);
     write(sseChunk(id, {}, 'stop'));
     write(SSE_DONE);
     if (!res.writableEnded) res.end();
+    persistTimings(conversationId, answered, timer);
   }
 
   async function vapiEvents(req: IncomingMessage, res: ServerResponse) {
@@ -188,8 +235,16 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     try {
       const result = await handleVapiEvent(opts.db, payload);
       const message = (payload as { message?: Record<string, unknown> } | null)?.message;
-      if (opts.session && result.conversationId && message) {
-        await opts.session.handleVapiMessage(result.conversationId, message);
+      if (message && result.conversationId) {
+        // A call starting: get its agent process ready before the first question. A call ending: let go of it, and
+        // forget which acknowledgement phrases it heard.
+        if (message.type === 'status-update' && message.status === 'in-progress') {
+          opts.warm?.warm(result.conversationId);
+        } else if (message.type === 'end-of-call-report') {
+          void opts.warm?.release(result.conversationId);
+          acks.forget(result.conversationId);
+        }
+        if (opts.session) await opts.session.handleVapiMessage(result.conversationId, message);
       }
     } catch (error) {
       logTechnical('vapi event', error);
@@ -224,6 +279,9 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       else res.end();
     }
   });
-  server.on('close', () => opts.session?.dispose());
+  server.on('close', () => {
+    opts.session?.dispose();
+    void opts.warm?.dispose();
+  });
   return server;
 }

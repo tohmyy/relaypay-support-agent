@@ -28,6 +28,18 @@ export function isErrorResult(r: ToolResult): r is ToolErrorResult {
 export interface ToolContext {
   /** Conversation id supplied by the caller (for example the X-Conversation-Id header). */
   conversationId?: string;
+  /**
+   * Write the tool_calls row after the result has been returned instead of before. The row is observability, so the
+   * model does not wait for its two database writes. Off by default (tests read the row straight after the call).
+   */
+  background?: boolean;
+}
+
+const pendingRecords = new Set<Promise<void>>();
+
+/** Waits for tool-call rows still being written in the background (used on shutdown and in tests). */
+export async function flushToolRecords(): Promise<void> {
+  await Promise.all([...pendingRecords]);
 }
 
 /** validate -> execute -> normalize -> log -> return. Never throws and never leaks raw errors. */
@@ -64,7 +76,7 @@ export async function executeTool(
     }
   }
 
-  await recordCall(
+  const recorded = recordCall(
     tool,
     rawInput,
     result,
@@ -73,6 +85,13 @@ export async function executeTool(
     store,
     Date.now() - startedAt,
   );
+  if (ctx.background) {
+    // recordCall never rejects, so the set cannot hold a failing promise.
+    pendingRecords.add(recorded);
+    void recorded.finally(() => pendingRecords.delete(recorded));
+  } else {
+    await recorded;
+  }
   return result;
 }
 

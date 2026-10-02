@@ -20,6 +20,12 @@ const schema = z.object({
   SESSION_WARNING_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(30)),
   SILENCE_TIMEOUT_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(15)),
   SILENCE_COUNTDOWN_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
+  // Latency. The acknowledgement is spoken when a reply is still not ready after this long. Pre-starting the agent
+  // process per call is off until a measured comparison (docs/PERFORMANCE.md) shows it helps.
+  ACK_AFTER_MS: z.preprocess(blank, z.coerce.number().int().min(200).max(30000).default(2500)),
+  AGENT_PREWARM: z.preprocess(blank, z.enum(['0', '1']).default('0')),
+  PREWARM_MAX: z.preprocess(blank, z.coerce.number().int().min(1).max(100).default(8)),
+  PREWARM_TTL_SECONDS: z.preprocess(blank, z.coerce.number().int().min(10).max(900).default(90)),
   // Private Vapi API key, used only to end a live call from the server.
   VAPI_API_KEY: z.preprocess(blank, z.string().min(1).optional()),
   // Optional model override; blank means the default model is used.

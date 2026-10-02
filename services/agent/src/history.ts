@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { errorMessage, logEvent } from './logger';
 import type { HistoryTurn } from './prompt';
 import type { AnswerType } from './schema';
 
@@ -29,18 +30,18 @@ export async function loadHistory(
   db: SupabaseClient,
   conversationId: string,
 ): Promise<LoadedHistory> {
-  const { data, error } = await db
-    .from('conversation_turns')
-    .select('turn_number, user_transcript, assistant_response')
-    .eq('conversation_id', conversationId)
-    .order('turn_number', { ascending: false });
-  fail('load history', error);
-  const rows = data ?? [];
-  // "Raised" means a handoff record was actually created, not just that escalation was the right path.
-  const conv = await db
-    .from('conversations')
-    .select('final_status')
-    .eq('conversation_id', conversationId);
+  // The two reads do not depend on each other, so they go out together.
+  const [turns, conv] = await Promise.all([
+    db
+      .from('conversation_turns')
+      .select('turn_number, user_transcript, assistant_response')
+      .eq('conversation_id', conversationId)
+      .order('turn_number', { ascending: false }),
+    // "Raised" means a handoff record was actually created, not just that escalation was the right path.
+    db.from('conversations').select('final_status').eq('conversation_id', conversationId),
+  ]);
+  fail('load history', turns.error);
+  const rows = turns.data ?? [];
   fail('load conversation', conv.error);
   return {
     turns: rows
@@ -95,4 +96,32 @@ export async function saveTurn(
         .eq('conversation_id', t.conversationId),
     ).catch(() => undefined);
   }
+}
+
+/**
+ * Stores the segment timings of a finished turn. Called after the reply has been written, never awaited on the
+ * reply path, and a failure only logs: timings are observability, not part of the answer.
+ */
+export function recordTurnTimings(
+  db: SupabaseClient,
+  conversationId: string,
+  turnNumber: number,
+  timings: unknown,
+): Promise<void> {
+  return Promise.resolve(
+    db
+      .from('conversation_turns')
+      .update({ timings })
+      .eq('conversation_id', conversationId)
+      .eq('turn_number', turnNumber),
+  ).then(
+    ({ error }) => {
+      if (error) {
+        logEvent('warn', 'turn timings not stored', { conversation_id: conversationId, message: error.message });
+      }
+    },
+    (error: unknown) => {
+      logEvent('warn', 'turn timings not stored', { conversation_id: conversationId, message: errorMessage(error) });
+    },
+  );
 }
