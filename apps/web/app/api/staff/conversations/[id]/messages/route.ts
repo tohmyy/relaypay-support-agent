@@ -5,7 +5,7 @@ import { CHAT_LIMITS, rateLimit } from '@/lib/auth/rate-limit';
 import { CONVERSATION_ID_PATTERN } from '@/lib/conversation-state';
 import { getConversation, getHumanMessages, getStaffProfiles } from '@/lib/dashboard/data.server';
 import { json, logFailure, readJson } from '@/lib/http';
-import { cleanMessage, typingActive } from '@/lib/human/messages';
+import { cleanMessage, isUuid, typingActive } from '@/lib/human/messages';
 import { claimConversation, modeOf, touchOpenHuman } from '@/lib/human/server';
 import { restInsert } from '@/lib/supabase.server';
 
@@ -31,6 +31,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       assignedToMe: row.assigned_staff_id === user.id,
       canReply: canStaffReply(user, row),
       customerTyping: typingActive(row.customer_typing_at),
+      customerReadAt: row.customer_last_read_at,
+      waitingSince: row.support_mode === 'human' && !row.ended_at && !row.assigned_staff_id ? (row.handoff_at ?? row.started_at) : null,
     });
   } catch (error) {
     logFailure('staff messages failed', error);
@@ -45,9 +47,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   if (!CONVERSATION_ID_PATTERN.test(id)) return json({ error: 'invalid conversation id' }, 400);
 
-  const payload = (await readJson(request)) as { body?: unknown } | undefined;
+  const payload = (await readJson(request)) as { body?: unknown; clientId?: unknown } | undefined;
   const clean = cleanMessage(payload?.body);
   if (!clean.ok) return json({ error: clean.error }, clean.error === 'too-long' ? 413 : 400);
+  if (payload?.clientId !== undefined && !isUuid(payload.clientId)) return json({ error: 'invalid client id' }, 400);
+  const clientId = (payload?.clientId as string | undefined) ?? null;
 
   try {
     const row = await getConversation(id);
@@ -65,14 +69,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       if (outcome === 'taken' && user.role !== 'support_admin') return json({ error: 'taken' }, 409);
       if (outcome === 'not-open') return json({ error: 'not-open' }, 409);
     }
-    const open = await touchOpenHuman(id, { staff_typing_at: null });
+    const open = await touchOpenHuman(id, { staff_typing_at: null, last_staff_message_at: new Date().toISOString() });
     if (!open) return json({ error: 'not-open' }, 409);
-    await restInsert('conversation_turns', {
-      conversation_id: id,
-      sender: 'staff',
-      body: clean.body,
-      staff_user_id: user.id,
-    });
+    await restInsert(
+      'conversation_turns',
+      {
+        conversation_id: id,
+        sender: 'staff',
+        body: clean.body,
+        staff_user_id: user.id,
+        ...(clientId ? { client_msg_id: clientId } : {}),
+      },
+      clientId ? { onConflict: 'conversation_id,client_msg_id' } : {},
+    );
     return json({ ok: true }, 201);
   } catch (error) {
     logFailure('staff message failed', error);

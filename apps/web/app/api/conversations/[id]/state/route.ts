@@ -23,7 +23,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     const [turns, tickets, escalations, conversation] = await Promise.all([
       restSelect<ConversationRows['turns'][number]>('conversation_turns', `select=turn_number,answer_type&${c}&order=turn_number.desc&limit=1`),
       restSelect<ConversationRows['tickets'][number]>('support_tickets', `select=ticket_id,created_at&${c}&order=created_at.desc&limit=1`),
-      restSelect<ConversationRows['escalations'][number]>('escalations', `select=preferred_time&${c}&order=created_at.desc&limit=1`),
+      restSelect<ConversationRows['escalations'][number]>('escalations', `select=preferred_time,contact_preference&${c}&order=created_at.desc&limit=1`),
       restSelect<ConversationRows['conversation'][number]>('conversations', `select=ended_at,end_reason,started_at,final_status,customer_id,support_mode,assigned_staff_id&${c}&limit=1`),
     ]);
     const linked = conversation[0]?.customer_id ?? null;
