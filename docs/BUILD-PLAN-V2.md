@@ -2621,15 +2621,15 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 
 ## Conversation Lifecycle
 
-- [ ] Silence timeout
-- [ ] Silence countdown
-- [ ] Silence-ended notification
-- [ ] Speaking cancels countdown
-- [ ] Natural completion detection
-- [ ] Completion confirmation
-- [ ] 6-minute hard limit
-- [ ] Final timeout warning
-- [ ] End reason persisted (`end_reason` column; distinct from `final_status`)
+- [x] Silence timeout
+- [x] Silence countdown
+- [x] Silence-ended notification
+- [x] Speaking cancels countdown
+- [x] Natural completion detection
+- [x] Completion confirmation
+- [x] 6-minute hard limit
+- [x] Final timeout warning
+- [x] End reason persisted (`end_reason` column; distinct from `final_status`)
 
 ## Conversation Quality
 
@@ -2712,14 +2712,14 @@ Legend: `[x]` done in V1 baseline · `[~]` partial · `[ ]` still open for V2.
 
 - [ ] Session rate limiting
 - [ ] Concurrent-session limit
-- [ ] 6-minute hard limit
-- [ ] Silence limit
+- [x] 6-minute hard limit
+- [x] Silence limit
 - [ ] Gibberish limit
 - [ ] Agent-call limit (conversation-level; per-turn `maxTurns: 6` already shipped)
 - [ ] MCP-call limit
 - [x] Maximum execution depth per turn (`maxTurns: 6`)
 - [ ] Suspicious usage logging
-- [ ] Server-side Session Controller enforcement
+- [x] Server-side Session Controller enforcement (Iteration 1; server-initiated hang-up of a live web call still needs the live check in `docs/VAPI.md`)
 
 ---
 

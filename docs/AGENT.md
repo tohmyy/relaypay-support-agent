@@ -74,6 +74,18 @@ See `docs/WORKFLOWS.md` for workflows A-H, the scenarios they cover and the reco
 
 `services/agent/src/server.ts` exposes the agent to Vapi (custom-LLM endpoint and webhook). See `docs/VAPI.md`.
 
+## Session control
+
+Time limits, silence and "that's all" are handled by the Session Controller (`services/agent/src/session/`), not by
+the model. In `server.ts` each turn first goes through `SessionController.beforeTurn` (inside the per-conversation
+queue): a closer, an expired deadline or an ended call is answered with a fixed reply and the agent is not run;
+otherwise `runTurn` runs and `afterTurn` reports the result (an `escalation` answer without a record holds silence
+detection while the contact form is open). The agent keeps owning turn reasoning, turn persistence, the output guard
+and escalation marking. Details and the end-reason table are in `docs/VAPI.md`.
+
+Offline tests: `tests/agent/completion.test.ts`, `tests/agent/session-controller.test.ts` (fake timers), and the
+session cases in `tests/agent/server.test.ts` and `tests/agent/vapi.test.ts`.
+
 ## Logging
 
 Each turn stores `latency_ms` and `cost_usd`; failures are written as `error` events and as JSON log lines. Retrieval queries are masked before they are stored. See `OBSERVABILITY.md`.

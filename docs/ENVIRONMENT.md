@@ -15,6 +15,11 @@ Missing or invalid variables are reported by name only, never by value.
 | `AGENT_PORT`, `AGENT_HOST` | agent server | no | Default 4100 and 127.0.0.1 |
 | `AGENT_PUBLIC_URL` | vapi:setup | no | Public base URL (tunnel or host) Vapi should call |
 | `AGENT_MODEL` | agent | no | Optional; default `claude-sonnet-5-5` |
+| `SESSION_MAX_SECONDS` | agent, web server | no | Absolute AI voice session limit. Default 360 (min 10) |
+| `SESSION_WARNING_SECONDS` | agent, web server | no | "Ending soon" warning window before the limit. Default 30 |
+| `SILENCE_TIMEOUT_SECONDS` | agent, web server | no | Quiet time before the countdown shows. Default 15 |
+| `SILENCE_COUNTDOWN_SECONDS` | agent, web server | no | Visible countdown length; the call ends when it runs out. Default 10 |
+| `VAPI_API_KEY` (agent) | agent | yes | Optional; lets the agent service hang up a live call. Same key as above |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |
 | `SUPABASE_URL` | web server, agent, mcp | no | URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | web server, agent, mcp | yes | Bypasses RLS; never in the browser |

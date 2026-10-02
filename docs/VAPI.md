@@ -16,7 +16,7 @@ Vapi -> POST /vapi/events (call started, end-of-call report) -> conversation row
 | Route | Auth | Purpose |
 |---|---|---|
 | `POST /chat/completions` (also `/v1/...`) | `Authorization: Bearer <AGENT_API_TOKEN>` | Vapi custom-LLM endpoint. OpenAI-style request; the last user message is the customer's utterance; Vapi's own system prompt is ignored |
-| `POST /vapi/events` | `X-Vapi-Secret: <VAPI_WEBHOOK_SECRET>` | `status-update` creates the conversation; `end-of-call-report` sets `ended_at`, the final status (`escalated` stays, otherwise `resolved` if there were turns, else `abandoned`) and Vapi's summary. Disabled when the secret is unset |
+| `POST /vapi/events` | `X-Vapi-Secret: <VAPI_WEBHOOK_SECRET>` | `status-update` creates the conversation; `speech-update` feeds silence detection; `end-of-call-report` sets `ended_at`, `end_reason`, the final status (`escalated` stays, otherwise per the table below) and Vapi's summary. The first recorded `end_reason` wins. Disabled when the secret is unset (silence detection then has no speech events) |
 | `GET /health` | none | liveness |
 
 Behavior:
@@ -33,10 +33,40 @@ Behavior:
 - **Ordering**: turns of one call run one at a time, so a caller interrupting cannot interleave two turns.
 - `AGENT_DEBUG=1` logs which fields Vapi sends (never their content).
 
+## Session lifecycle (Build Plan V2, Iteration 1)
+
+The Session Controller (`services/agent/src/session/`) sits on the path above. It is deterministic: no model call
+decides when a session ends. State is in-process; the deadline is re-read from `conversations.started_at`.
+
+| What | Behavior | Recorded as |
+|---|---|---|
+| Silence | `SILENCE_TIMEOUT_SECONDS` (15) of quiet, then a visible `SILENCE_COUNTDOWN_SECONDS` (10) countdown, then the call ends (+1 s grace on the server). Quiet is measured from the end of the assistant's speech or the customer's; not while the assistant is speaking, a turn is being processed, or the escalation contact form is open. The customer speaking cancels it | `end_reason = silence-timeout`, `final_status = abandoned`, events `silence_warning`, `session_ended` |
+| Time limit | `SESSION_MAX_SECONDS` (360). Warning event and (if live control is available) a spoken warning at `SESSION_WARNING_SECONDS` (30) before; hard end at the limit. Turns after the deadline get a fixed "session has ended" reply and never reach the model | `end_reason = session-timeout`, `final_status = abandoned`, events `session_warning`, `session_ended` |
+| "That's all" | Clear closers ("that's all", "I'm done", "thank you, goodbye", "I don't need anything else") get a fixed goodbye and the call ends once the goodbye has been spoken. Bare thanks ("okay, thanks") gets "anything else?"; a following "no" ends it, anything else carries on. These turns are stored but cost no model call | `end_reason = user-ended`, `final_status = resolved` (abandoned if no turns) |
+| Vapi's own end | `end-of-call-report` `endedReason` is mapped: `exceeded-max-duration` → `session-timeout`, `silence-timed-out` → `silence-timeout`, `customer-ended-call` → `user-ended`, `assistant-ended-call*` → `agent-ended`, errors → `error`. An unmapped reason leaves `end_reason` null | |
+
+`final_status` stays the coarse outcome; `end_reason` says why. An escalated conversation stays `escalated`.
+
+Three independent layers enforce the time limit: the controller's timer, refusal of turns past the deadline, and
+Vapi's own `maxDurationSeconds`, which `vapi:setup` sets to `SESSION_MAX_SECONDS + 10`. `vapi:setup` also subscribes to
+`speech-update` and sets Vapi's `silenceTimeoutSeconds` high (600) so Vapi's default does not cut calls before the controller.
+The browser also hangs up 3 s after the limit as a last resort; it never decides anything durable.
+
+### Ending a call from the server (needs a live check)
+
+Vapi documents live control through `call.monitor.controlUrl` (`{"type":"end-call"}`, `{"type":"say","content":...,
+"endCallAfterSpoken":true}`). The docs do not say whether that URL reaches web-SDK calls or webhook payloads. The
+controller therefore uses `monitor.controlUrl` when a webhook carries one, and otherwise falls back to a REST
+`DELETE /call/{id}` with `VAPI_API_KEY`, which is **unverified for live web calls**. If neither hangs up, the session is
+still marked ended in the database, further turns are refused, and Vapi's `maxDurationSeconds` or the browser ends the
+call. To verify: run a call with `AGENT_DEBUG=1`, stay silent, and watch whether the call drops at about 26 s. Record the
+result here.
+
 ## Pointing your assistant at it
 
 `scripts/vapi/setup.ts` **modifies the assistant in `VAPI_ASSISTANT_ID`**; it never creates one. It changes only the
-model (custom LLM at your URL), the webhook (`server`, `serverMessages`) and attaches a credential; voice, transcriber,
+model (custom LLM at your URL), the webhook (`server`, `serverMessages`), the session-limit backstops
+(`maxDurationSeconds`, `silenceTimeoutSeconds`) and attaches a credential; voice, transcriber,
 name and greeting stay as you configured them. Before patching it saves the previous model and webhook settings to
 `vapi-assistant-backup-<id>.json` (git-ignored) so the change can be undone by hand.
 

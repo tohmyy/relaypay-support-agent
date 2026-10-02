@@ -8,7 +8,10 @@ server log.
 | Need (BUILD-PLAN section 35) | Where | Written by |
 |---|---|---|
 | Conversation start | `conversations` (`started_at`, `channel`) | agent on the first turn, or the Vapi webhook on `in-progress` |
-| Conversation end | `conversations` (`ended_at`, `final_status`, `summary`) and a `call_ended` row in `conversation_events` (`endedReason`, `durationSeconds`, `cost`) | Vapi `end-of-call-report` webhook |
+| Conversation end | `conversations` (`ended_at`, `final_status`, **`end_reason`**, `summary`) and a `call_ended` row in `conversation_events` (`endedReason`, `durationSeconds`, `cost`) | Vapi `end-of-call-report` webhook, or the Session Controller when it ends the call first (first recorded `end_reason` wins) |
+| Why a session ended | **`conversations.end_reason`**: `user-ended`, `silence-timeout`, `session-timeout`, `agent-ended`, `human-closed`, `low-confidence`, `error` (null when Vapi's reason is unmapped). `final_status` stays the coarse outcome | Session Controller / webhook |
+| Session lifecycle events | `conversation_events`: `silence_warning` (`countdown_seconds`), `session_warning` (`seconds_left`), `session_ended` (`end_reason`, `final_status`, `duration_seconds`) | Session Controller, `endConversation` |
+| Last activity | **`conversations.last_activity_at`**, stamped on each stored turn and at session end | agent |
 | User and assistant turns | `conversation_turns` (transcript, reply, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**) | agent |
 | Retrievals | `retrieval_logs` (query with personal data masked, source titles, summary) | agent retrieval |
 | Tool calls | `tool_calls` (`tool_name`, **`purpose`**, `input_summary`, `result_summary`, `status`, `error`, **`duration_ms`**, timestamp, conversation id) | MCP server, for every call |
@@ -16,7 +19,9 @@ server log.
 | Escalations | `escalations` (conversation id, ticket id, status, requested time) | MCP `create_escalation` |
 | Errors | `conversation_events` with `event_type = 'error'` and `{source, message}` (message masked and cut to 300 characters); `tool_calls` rows with `status = 'failed'`; JSON lines on stderr | agent (`agent.runTurn`, `vapi.webhook`), MCP |
 
-Bold columns were added in Phase 10 (migration `..._observability.sql`, all nullable).
+Bold columns were added in Phase 10 (migration `..._observability.sql`, all nullable), except `end_reason` and
+`last_activity_at`, which come from V2 Iteration 1 (migration `20261001000008_session_lifecycle.sql`, nullable, no
+backfill). Apply that migration before running the new agent or web code: both read and write those columns.
 
 Every server log line is one JSON object on stderr: `{ts, level, service, event, conversation_id?, message?}`.
 Secret-looking fields (`token`, `key`, `secret`, `password`, `authorization`, `cookie`) are dropped and strings are

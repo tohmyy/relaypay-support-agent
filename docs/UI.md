@@ -27,7 +27,8 @@ SupportPage (client)  --useVoiceSession-->  VoiceClient (Vapi web SDK, loaded on
       |                                         events: call start/end, speech, volume, transcript, errors
       |  polls every 3 s and after each assistant turn
       v
-GET /api/conversations/<id>/state   (server only, service role)  ->  { answerType, ticketReference, escalation, ended }
+GET /api/conversations/<id>/state   (server only, service role)
+   ->  { answerType, ticketReference, escalation, ended, endReason, startedAt, serverTime, limits }
 ```
 
 - **Voice state** (`lib/voice/state.ts`) is one reducer: idle, connecting, listening, user-speaking, processing,
@@ -36,8 +37,20 @@ GET /api/conversations/<id>/state   (server only, service role)  ->  { answerTyp
   Components only render the state they are given.
 - **Conversation id** is `vapi_<call id>`, which is what the agent server derives from Vapi's requests. This replaces
   the build plan's app-generated `conv_` id because everything in the backend already keys on the call id.
-- **The browser never reads Supabase.** The state route returns only four customer-safe fields (never names, emails,
-  transcripts, notes or internal ids), the same neutral answer for unknown ids, and `Cache-Control: no-store`.
+- **The browser never reads Supabase.** The state route returns only whitelisted customer-safe fields (never names,
+  emails, transcripts, notes or internal ids), the same neutral answer for unknown ids, and `Cache-Control: no-store`.
+- **Session timing (V2 Iteration 1).** The agent service enforces silence and the 6-minute limit; the page only renders
+  them. `useSessionClock` ticks once a second and derives a view (`lib/session/derive.ts`: silence countdown, seconds
+  left, warning) from the voice state and the `limits` / `startedAt` / `serverTime` the state route returns (server
+  clock, so a skewed browser clock does not matter). It is a derived view, not a third state machine. The silence
+  countdown shows after `SILENCE_TIMEOUT_SECONDS` in `listening`, any other voice state cancels it, and it is held while
+  the escalation form is open. The ticking number is hidden from assistive technology; one live-region sentence
+  announces it. When the call drops, `endReason` selects the end screen (silence, time limit, or the normal one); a
+  guess from the last visible countdown is shown until the recorded reason is read (the page looks a few more times
+  after the call ends), and no guess is made when the customer pressed End. If the call is still up 3 s after the
+  limit, the browser hangs up as a last resort.
+- **Preview** (`/?mock=1`): short limits (6 s quiet, 5 s countdown, 120 s session), a stand-in state fetcher, and the
+  scripted call goes quiet and ends, so the countdown and the end screen can be seen in about 25 seconds.
 - **Escalation form.** Name and email are required, callback time is optional. Submitting types the details into the
   live call as a message, so the agent runs its normal escalation (right category, ticket, record, event log) and the
   typed email avoids speech-recognition mistakes. The panel shows progress, then the confirmation with the *requested*
@@ -76,6 +89,8 @@ it moves to the confirmation only after the form is submitted. A full accessibil
   validation, copy rules, error classification.
 - `tests/web/components.test.tsx`: component behavior and copy (jsdom).
 - `tests/web/session.test.tsx`: the session hook driven by a scripted client (full call, errors, escalation flow).
+- `tests/web/session-view.test.ts` and `tests/web/session-clock.test.tsx`: silence countdown, time-limit warning,
+  server-clock handling and end-reason lookup (fake timers).
 - `tests/web/route.test.ts` and `tests/web/state-route.live.test.ts`: the state route with a fake and with the real
   database.
 
