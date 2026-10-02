@@ -46,7 +46,14 @@ export interface ConversationRows {
   turns: { turn_number: number | null; answer_type: string | null }[];
   tickets: { ticket_id: string | null; created_at?: string | null }[];
   escalations: { preferred_time: string | null }[];
-  conversation: { ended_at: string | null; end_reason?: string | null; started_at?: string | null }[];
+  conversation: {
+    ended_at: string | null;
+    end_reason?: string | null;
+    started_at?: string | null;
+    /** Used by the route to decide who may read a call tied to a customer; never part of the public state. */
+    final_status?: string | null;
+    customer_id?: string | null;
+  }[];
 }
 
 function isoOrNull(value: string | null | undefined): string | null {
