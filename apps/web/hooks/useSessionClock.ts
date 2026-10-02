@@ -34,8 +34,10 @@ export function useSessionClock(input: {
   /** Last-resort local hang-up when the time limit has long passed. */
   onExpired: () => void;
   now?: () => number;
+  /** Composer typing holds the visible silence countdown only. */
+  typingActive?: boolean;
 }): SessionClock {
-  const { voiceState, supportState, backend, onExpired, now = Date.now } = input;
+  const { voiceState, supportState, backend, onExpired, now = Date.now, typingActive = false } = input;
   const [view, setView] = useState<SessionView>(IDLE_SESSION_VIEW);
   const [provisionalEnd, setProvisionalEnd] = useState<PublicEndReason | null>(null);
   const quietSince = useRef<number | null>(null);
@@ -47,10 +49,10 @@ export function useSessionClock(input: {
     expired.current = onExpired;
   }, [onExpired]);
 
-  // Quiet time starts each time the call settles into `listening`, and any other state cancels it.
+  // Quiet time starts each time the call settles into `listening`, and any other state (or typing) cancels it.
   useEffect(() => {
-    quietSince.current = voiceState === 'listening' ? now() : null;
-  }, [voiceState, now]);
+    quietSince.current = voiceState === 'listening' && !typingActive ? now() : null;
+  }, [voiceState, typingActive, now]);
 
   useEffect(() => {
     const server = backend.serverTime ? Date.parse(backend.serverTime) : NaN;
@@ -79,6 +81,7 @@ export function useSessionClock(input: {
         quietSinceMs: quietSince.current,
         nowMs: now(),
         clockOffsetMs: offset.current,
+        typingActive,
       });
       lastView.current = next;
       setView((prev) =>
@@ -93,7 +96,7 @@ export function useSessionClock(input: {
     tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [live, voiceState, supportState, backend.limits, startedAtMs, now]);
+  }, [live, voiceState, supportState, backend.limits, startedAtMs, now, typingActive]);
 
   return { view, provisionalEnd };
 }

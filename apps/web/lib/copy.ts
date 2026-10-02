@@ -101,6 +101,9 @@ export const COPY = {
     endedHeading: 'Session ended',
     endedBodySilence: 'The conversation ended because there was no activity.',
     activeElsewhere: 'You already have an active support conversation. Please continue in that one.',
+    continueExisting: 'Continue existing conversation',
+    endAndStartNew: 'End it and start a new conversation',
+    replaceFailed: 'We could not end that conversation. Please try again in a little while.',
     tooManyConversations: 'You have started several conversations recently. Please try again in a little while.',
     endedBodyLimit:
       'This request needs to be continued by a support specialist. You can start a new conversation whenever you need help.',
@@ -145,6 +148,9 @@ export const COPY = {
   audio: {
     muted: 'Your microphone is muted, so RelayPay Support cannot hear you. Unmute it to carry on talking.',
     noisy: 'It sounds noisy where you are. If RelayPay Support has trouble hearing you, try a quieter spot or a headset.',
+    mute: 'Mute microphone',
+    unmute: 'Unmute microphone',
+    muteFailed: 'The microphone setting could not be changed. Check your browser controls and try again.',
   },
   /** The 30 second window to pick a conversation back up after it ends. */
   resume: {

@@ -20,8 +20,8 @@ The agent connects with `MCP_SERVER_URL` (for local development `http://localhos
 | `lookup_customer` | one or more of `customer_id`, `email`, `company_name` (a linked conversation always gets its own account) | `found`, `customer_id`, `company_name`, `plan`, `account_status`, `kyc_status`, `support_notes` |
 | `lookup_transaction` | `transaction_id` | `found`, `transaction_id`, `customer_id`, `type`, `status`, `amount` (number), `currency`, `estimated_arrival` (or null), `support_summary` |
 | `lookup_payout` | `payout_id` or `transaction_id` | `found`, `payout_id`, `transaction_id`, `customer_id`, `status`, `scheduled_for`, `failure_reason`, `support_summary` (from the linked transaction) |
-| `create_support_ticket` | `category`, `priority`, `summary`, `conversation_id`, optional `customer_id` | `ticket_id` (`TKT-000001`), `status: "open"` |
-| `create_escalation` | `category`, `reason`, optional `ticket_id`, `contact_preference` (`text_chat` / `callback`), `preferred_at` (ISO 8601), `preferred_timezone` (IANA), `preferred_time` (display text); `user_name`, `user_email`, `customer_id` only when the conversation is not linked | `escalation_id` (`ESC-000001`), `status: "open"`, `callback_at` (callback only), `follow_up_summary` |
+| `create_support_ticket` | `category`, `priority`, `summary` (conversation from `X-Conversation-Id`) | `ticket_id` (`TKT-000001`), `status: "open"` |
+| `create_escalation` | `category`, `reason`, `contact_preference` (`text_chat` / `callback`), `preferred_at` (ISO 8601), `preferred_timezone` (IANA), `preferred_time` (display text) | `escalation_id` (`ESC-000001`), `ticket_id`, `status: "open"`, `callback_at` (callback only), `follow_up_summary` |
 | `log_conversation_event` | `conversation_id`, `event_type`, `summary`, optional `metadata` | `logged: true` |
 
 Enums: ticket category `payment|payout|invoice|account|compliance|technical|other`, priority
@@ -48,12 +48,18 @@ Enums: ticket category `payment|payout|invoice|account|compliance|technical|othe
 - **Who is asking.** The agent sends `X-Conversation-Id`; for the account tools (`lookup_customer`, `lookup_transaction`,
   `lookup_payout`, `create_support_ticket`, `create_escalation`) the server reads `conversations.customer_id` / `user_id`
   (written by the web app's link, never taken from the model) and scopes the tool to that customer. Another customer's
-  transaction or payout is `found: false`; `lookup_customer` returns the signed-in account whatever was asked; a different
-  `customer_id` on a ticket or escalation is refused (`not_authorized`). A failed read of the link fails closed.
-- **`MCP_REQUIRE_IDENTITY`**: when on (the default in production) account tools refuse a conversation that is not linked to a
-  signed-in customer (`not_authorized`). Off by default elsewhere so scripts and tests can call the tools directly.
-- **Contact details.** A linked escalation stores the account's display name and email (`app_users`) whatever the model
-  supplied; typed name/email are only needed when no account is linked.
+  transaction or payout is `found: false` (the customer is part of the query itself); `lookup_customer` returns the
+  signed-in account whatever was asked. `customer_id`, `user_name`, `user_email` and `ticket_id` are not tool arguments
+  any more: if a model still sends them they are dropped and never read. A failed read of the link fails closed.
+- **No unlinked fallback.** Every account tool requires a conversation linked to a signed-in customer whose account has a
+  name and email (`not_authorized` / `profile_incomplete`, with account-settings guidance), and creates no ticket or
+  escalation otherwise. The tool server has no switch for this; only tests and development scripts pass `allowUnlinked`
+  to the tool context, and only read-only tools honour it.
+- **Contact details.** An escalation stores the account's display name and email (`app_users`), nothing the model supplied.
+- **Ticket and escalation are one operation.** `create_escalation` calls `create_ticket_and_escalation` (a database function,
+  migration 20261007000017): it reuses the ticket already logged in the conversation or creates one, creates the
+  escalation, and a repeat returns the same pair. `create_support_ticket` is once per conversation and summary
+  (`create_support_ticket_once`). The request's `X-Conversation-Id` wins over a conversation id typed into tool arguments.
 - **Callback time.** Anything that is not a `text_chat` escalation needs a specific `preferred_at`. Without an offset it is wall
   clock in `preferred_timezone` (a timezone is then required). Accepted only if `now - 2 min <= preferred_at <= now + 1
   calendar month` (month measured on the customer's wall clock, so 31 Jan becomes 28 Feb). The error text is safe to give

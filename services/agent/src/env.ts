@@ -18,7 +18,7 @@ const schema = z.object({
   // Session lifecycle (seconds). Enforced by the Session Controller, never by the model.
   SESSION_MAX_SECONDS: z.preprocess(blank, z.coerce.number().int().min(10).default(360)),
   SESSION_WARNING_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(30)),
-  SILENCE_TIMEOUT_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(15)),
+  SILENCE_TIMEOUT_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
   SILENCE_COUNTDOWN_SECONDS: z.preprocess(blank, z.coerce.number().int().min(1).default(10)),
   // Human handoff (Mode B): after an escalation, signed-in customers move to a text chat with staff. Off by default.
   HUMAN_HANDOFF: z.preprocess(blank, z.enum(['0', '1']).default('0')),

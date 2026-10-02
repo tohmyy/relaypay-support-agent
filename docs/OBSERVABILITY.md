@@ -16,11 +16,12 @@ server log.
 | Readiness and retries | Agent `GET /ready` returns per-dependency `ok` and `ms`. The web server logs a line for each automatic retry: `[web] retry operation=<ready, start, link, state-poll or agent-ready> attempt=<1 or 2> outcome=<retrying or failed> class=<transient or permanent> ms=<n>`. A call ended because no customer was linked records a `conversation_events` row `unlinked_call` and `end_reason = error` | agent, web server |
 | Human handoff and limits | `conversation_events`: `human_handoff` (`reason`: `escalation` or `limit-reached`), `human_closed` (`closed_by`), `limit_reached` (`kind`, `limit`, `value`; kinds: `agent_calls`, `tool_calls`, `retrievals`, `concurrent_sessions`, `session_rate`, `global_session_rate`); `conversations.support_mode`, `assigned_staff_id`; `end_reason = limit-reached` / `human-closed`. `npm run report` shows them in its **Limits and handoffs** section (see `docs/ABUSE.md`) | Session Controller, web staff routes |
 | Last activity | **`conversations.last_activity_at`**, stamped on each stored turn and at session end | agent |
-| User and assistant turns | `conversation_turns` (transcript, reply, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**) | agent |
+| User and assistant turns | `conversation_turns` (transcript, reply, **`turn_uid`**, **`display_text`**, **`spoken_text`**, `answer_type`, `confidence_note`, **`latency_ms`**, **`cost_usd`**). History and the incremental transcript API prefer `display_text` | agent |
 | Retrievals | `retrieval_logs` (query with personal data masked, source titles, summary) | agent retrieval |
 | Tool calls | `tool_calls` (`tool_name`, **`purpose`**, `input_summary`, `result_summary`, `status`, `error`, **`duration_ms`**, timestamp, conversation id) | MCP server, for every call |
-| Tickets | `support_tickets` (conversation id) | MCP `create_support_ticket` |
-| Escalations | `escalations` (conversation id, ticket id, status, requested time, `contact_preference`: `text_chat` or `callback`) | MCP `create_escalation` |
+| Tickets | `support_tickets` (conversation id, status `open`/`in_progress`/`closed`) | MCP `create_support_ticket` / `create_ticket_and_escalation` |
+| Escalations | `escalations` (conversation id, required same-conversation `ticket_id`, status, requested time, `contact_preference`: `text_chat` or `callback`) | MCP `create_escalation` |
+| Staff lifecycle | Claim, release, close and customer end write one `conversation_events` row each and keep ticket/escalation status aligned | web staff/customer RPCs |
 | Errors | `conversation_events` with `event_type = 'error'` and `{source, message}` (message masked and cut to 300 characters); `tool_calls` rows with `status = 'failed'`; JSON lines on stderr | agent (`agent.runTurn`, `vapi.webhook`), MCP |
 
 `timings` was added in V2 Iteration 3 (migration `20261002000009_turn_timings.sql`, nullable, no backfill). Apply it before

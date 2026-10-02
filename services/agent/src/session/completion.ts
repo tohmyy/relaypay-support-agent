@@ -5,12 +5,13 @@
  */
 export type Completion = 'clear' | 'ambiguous' | 'none';
 
-const MAX_WORDS = 10;
+const MAX_WORDS = 14;
 
 function normalize(text: string): string {
   return text
     .toLowerCase()
     .replace(/[‘’]/g, "'")
+    .replace(/good\s+bye/g, 'goodbye')
     .replace(/[^a-z' ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -24,10 +25,12 @@ function looksLikeRequest(raw: string): boolean {
 const FILLER =
   "(?:(?:ok|okay|alright|all right|no|nope|nah|yeah|yes|great|perfect|cool|awesome|thanks|thank you|thank you very much|thanks a lot|thank you so much|cheers|well|so|right) )*";
 const TAIL =
-  "(?: (?:thanks|thank you|thank you very much|thanks a lot|thank you so much|bye|goodbye|bye bye|for your help|for the help|for helping|have a good day|take care))*";
+  "(?: (?:thanks|thank you|thank you very much|thanks a lot|thank you so much|bye|goodbye|bye bye|for your help|for the help|for helping|have a (?:good|great|nice) (?:day|evening|night)|take care))*";
 const CORE = [
   "that'?s (?:all|everything|it)(?: for now| for today| i needed)?",
   "that is (?:all|everything|it)",
+  "that'?ll be (?:all|everything)(?: for now| for today)?",
+  'that will be (?:all|everything)(?: for now| for today)?',
   "i'?m (?:done|all done|all set|finished)(?: now| for now)?",
   'i am (?:done|all done|all set|finished)',
   "i don'?t need anything else",
@@ -39,7 +42,7 @@ const CORE = [
   'goodbye',
   'bye bye',
   'bye',
-  'have a good day',
+  'have a (?:good|great|nice) (?:day|evening|night)',
   'take care',
 ].join('|');
 

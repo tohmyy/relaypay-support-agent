@@ -19,7 +19,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `AGENT_MODEL` | agent | no | Optional; default `claude-sonnet-5-5` |
 | `SESSION_MAX_SECONDS` | agent, web server | no | Absolute AI voice session limit. Default 360 (min 10) |
 | `SESSION_WARNING_SECONDS` | agent, web server | no | "Ending soon" warning window before the limit. Default 30 |
-| `SILENCE_TIMEOUT_SECONDS` | agent, web server | no | Quiet time before the countdown shows. Default 15 |
+| `SILENCE_TIMEOUT_SECONDS` | agent, web server | no | Quiet time before the countdown shows. Default 10 |
 | `SILENCE_COUNTDOWN_SECONDS` | agent, web server | no | Visible countdown length; the call ends when it runs out. Default 10 |
 | `HUMAN_HANDOFF` | agent | no | `1` moves a signed-in customer to a text chat with staff after an escalation (the call is hung up; `docs/HANDOFF.md`). **Default off** |
 | `MAX_AGENT_CALLS`, `MAX_TOOL_CALLS`, `MAX_RETRIEVALS` | agent | no | Per-conversation budgets (defaults 30, 50, 30). 0 turns one off. See `docs/ABUSE.md` |
@@ -39,7 +39,6 @@ Missing or invalid variables are reported by name only, never by value.
 | `MCP_SERVER_URL` | web server, agent | no | URL |
 | `MCP_PORT`, `MCP_HOST` | mcp | no | Optional; default 4000 and 127.0.0.1 |
 | `MCP_SERVER_AUTH_TOKEN` | web server, agent, mcp | yes | Shared bearer token |
-| `MCP_REQUIRE_IDENTITY` | mcp | no | `1`/`0`: account tools refuse a conversation not linked to a signed-in customer. Blank = on only when `NODE_ENV=production` |
 
 Validation: `apps/web/lib/env.ts` (public and server schemas), `apps/web/lib/env.server.ts`
 (`server-only`, lazy so builds work without secrets), `services/*/src/env.ts` (validated at process start).

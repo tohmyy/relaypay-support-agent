@@ -133,6 +133,8 @@ describe('callEndedMetadata', () => {
 
 describe('tool call logging', () => {
   const tool = (name: string) => tools.find((t) => t.name === name)!;
+  /** Read-only tools may run unlinked in tests only. */
+  const UNLINKED = { allowUnlinked: true };
 
   it('gives every tool a fixed purpose', () => {
     for (const t of tools) {
@@ -144,7 +146,7 @@ describe('tool call logging', () => {
 
   it('records purpose, duration and an id-and-status summary for a lookup', async () => {
     const store = createFakeStore();
-    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store);
+    await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, UNLINKED);
     expect(store.toolCalls[0]).toMatchObject({
       tool_name: 'lookup_transaction',
       status: 'success',
@@ -156,21 +158,23 @@ describe('tool call logging', () => {
 
   it('summarizes not-found and failures without free text', async () => {
     const store = createFakeStore();
-    await executeTool(tool('lookup_customer'), { customer_id: 'CUS-0000' }, store);
-    await executeTool(tool('lookup_transaction'), {}, store);
+    await executeTool(tool('lookup_customer'), { customer_id: 'CUS-0000' }, store, UNLINKED);
+    await executeTool(tool('lookup_transaction'), {}, store, UNLINKED);
     expect(store.toolCalls.map((c) => c.result_summary)).toEqual(['not found', 'error: invalid_input']);
   });
 
   it('never puts names, emails or reasons in the summary of a write', async () => {
     const store = createFakeStore();
+    store.identities.set('vapi_linked', { customer_id: 'CUS-1001', user_id: 'user-1' });
     await executeTool(
       tool('create_escalation'),
-      { user_name: 'Ada Lovelace', user_email: 'ada@example.com', category: 'account', reason: 'my card 4111111111111111 was stolen', preferred_at: new Date(Date.now() + 86400000).toISOString() },
+      { category: 'account', reason: 'my card 4111111111111111 was stolen', preferred_at: new Date(Date.now() + 86400000).toISOString() },
       store,
+      { conversationId: 'vapi_linked' },
     );
     const rec = store.toolCalls[0];
     expect(rec.result_summary).toBe('escalation ESC-000001 created');
-    expect(JSON.stringify(rec)).not.toMatch(/Ada|ada@|4111|stolen/);
+    expect(JSON.stringify(rec)).not.toMatch(/Amara|amara@|4111|stolen/);
   });
 
   it('scrubs the stored technical error', async () => {
@@ -180,7 +184,7 @@ describe('tool call logging', () => {
         throw new Error('connection refused for ada@example.com');
       },
     });
-    const r = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store);
+    const r = await executeTool(tool('lookup_transaction'), { transaction_id: 'TXN-9001' }, store, UNLINKED);
     expect(r).toMatchObject({ error: { code: 'temporarily_unavailable' } });
     const rec = store.toolCalls.at(-1)!;
     expect(rec.status).toBe('failed');

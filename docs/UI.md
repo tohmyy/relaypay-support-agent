@@ -72,7 +72,7 @@ GET /api/conversations/<id>/state   (server only, service role)
 | Partial transcript | Partial text updates in place, then finalizes; no flicker, no typing indicator |
 | Timestamps | Omitted ("if useful" in the spec) |
 | Transcript after the call | Kept next to the completion screen |
-| Mute control, phone number, rating | Not built (not in the spec / optional). Pause and mute were investigated rather than built: `docs/PAUSE-RESUME.md`, with a developer-only workbench at `/dev/voice-lab` (same 404-in-production rule as `/dev/states`; it uses the real assistant) |
+| Mute control | Accessible toggle next to End (`aria-pressed`). `VoiceClient.setMuted` verifies provider state; a failure keeps the actual mute and does not claim success. Mute does not hold silence or the hard cap. Noise advisory stays empty without an SDK level |
 | Colors | Primary `#0c3380` and accent `#0a7fa8` sampled from the logo; **provisional** until the approved brand values are available |
 
 ## Accessibility
@@ -114,10 +114,10 @@ signed-in customer. Customer wording lives in `lib/shell-copy.ts` (`SHELL_COPY`,
 ### Text chat with a specialist
 
 After a handoff the customer's `/support` page (and, on any later visit, `/support` or the dashboard banner) shows
-`HumanSupport`: a structured transcript (not chat bubbles), the specialist's name and title, a polite typing line, and a
-labelled message box (Enter sends, Shift+Enter makes a new line). It takes no focus and has no landmark of its own, so it
-can sit in a page or a future widget. Staff use `StaffChat` on the conversation page. Customer wording is in `SHELL_COPY.human`,
-staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
+`HumanSupport`, sharing `ChatBubble` / `ChatLog` with `StaffChat`: bubbles, timestamps, read/typing, retry, and a closed
+state. A joined banner appears when a specialist is assigned; close says "This support conversation and ticket are closed."
+(`aria-live`, tab title, a best-effort chime). Both roles can open **Earlier conversation with the assistant**. Customer
+wording is in `SHELL_COPY.human`, staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
 
 ### Console layout, bubbles, scrolling and typing (Build Plan V3, W3)
 
@@ -127,8 +127,12 @@ staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
   left, each with a speaker label; a partial turn is the same bubble, softened, updated in place.
 - **Auto-scroll.** `ConversationTranscript` sticks to the bottom as turns arrive and grow, pauses when the customer scrolls
   more than 24px up, and follows again when they return to the bottom (`tests/web/console.test.tsx`).
+- **One card.** The transcript is the only scroll region. `TypedComposer` and post-end `SessionFeedback` sit in the same card,
+  below the transcript. The voice panel stays above.
 - **Type to converse.** While the call is live, `TypedComposer` (Enter sends, Shift+Enter makes a new line) sends the text into
-  the same call (`VoiceClient.send`) and shows it as the customer's turn. It is hidden while connecting or ending.
+  the same call (`VoiceClient.send`) and shows it as the customer's turn. First keystroke / 3 s heartbeats / stop on submit,
+  blur, cancel, unmount and end go to `POST /activity` so silence does not fire while the customer is typing. It is hidden
+  while connecting or ending.
 - **Type instead.** On the microphone errors (permission refused, no microphone, unsupported browser) `ErrorState` offers
   **Type instead**: `TextConversation` carries the conversation by typing alone (`useTextSession` →
   `POST /api/support/text-turn` → the agent's `POST /text-turn`), tied to the signed-in customer, with the same assistant,
@@ -137,11 +141,13 @@ staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
   a calm default while the reason is still being read), **Start another conversation**, and **View transcript**
   (`/support/<id>`) only when the call is really saved to the customer's account.
 
-### Mute, noise and resume (Build Plan V3, W5)
+### Mute, noise and resume (Build Plan V3, W5 + V4, W9)
 
+- **Mute control.** `VoicePanel` has a toggle next to End (`aria-pressed`). `setMuted` is verified against the provider; a
+  rejection keeps the actual state and does not claim success. Mute does not hold silence or the hard session deadline.
 - **Muted / noisy notices.** `AudioNotices` is an `aria-live="polite"` region above the voice panel. It says the microphone is
   muted when the provider reported it, and gives a noise advisory (never an accusation, never blocking) when an ambient level
-  sustained above the line; with no signal it is empty. The Vapi web SDK reports mute (polled once a second) but no ambient
+  sustained above the line; with no signal it is empty. The Vapi web SDK reports mute but no ambient
   level, so the noise advisory has no live source yet.
 - **Resume.** When a call ends the transcript stays and `ResumePrompt` offers **Resume conversation** / **No, thanks** for 30
   seconds, with a countdown. Resume keeps the transcript and the conversation id; after 30 seconds (or "No, thanks") only
@@ -162,6 +168,9 @@ staff wording in `STAFF_COPY.chat`. Details: `docs/HANDOFF.md`.
   since midnight UTC); the conversation page shows the same per-call estimate and the customer's ratings and comments. The
   estimate is the sum of the turns' `cost_usd` (model usage only, never the voice provider's call cost, not a bill).
   "Resolved" in the queue is the AI conversation's outcome, not a closed ticket.
+- **Staff archive and escalations.** `/staff/conversations` is paginated (opaque cursor, started/ended datetime, channel,
+  customer, outcome, escalation, ticket, assignee, estimated cost). `/staff/escalations` is the ticket-keyed inbox (status
+  filter, `TKT-######` jump). Shared `StatusBadge` tones live in `lib/dashboard/badges.ts`.
 
 ### Before a call starts (Build Plan V3, W1)
 

@@ -9,7 +9,7 @@ hold a session open for ever. Every limit is enforced **on the server**; the bro
 |---|---|---|
 | Sign-in | web app, login action | 5 attempts per 15 minutes per email and address (Postgres counter) |
 | Session length | agent Session Controller + Vapi `maxDurationSeconds` | 6 minutes |
-| Silence | agent Session Controller | 15 s quiet, 10 s countdown |
+| Silence | agent Session Controller | 10 s quiet, 10 s countdown |
 | Conversation budgets | agent Session Controller (`beforeTurn`) | 30 model turns, 50 tool calls, 30 knowledge lookups |
 | Per-turn depth | agent (`maxTurns`) | 6 |
 | Concurrent sessions | agent Session Controller; web link route answers early | 1 active voice session per signed-in customer |
@@ -31,9 +31,11 @@ apply.
   A signed-in customer with `HUMAN_HANDOFF=1` is **moved to staff** (`docs/HANDOFF.md`, reason `limit-reached`); everyone
   else hears "This request needs to be continued by a support specialist" and the call ends with
   `end_reason = limit-reached` (`final_status = abandoned`, unless it was already escalated).
-- **A second simultaneous call** from the same signed-in customer: the newer call hears "You already have an active support
-  conversation" and ends. The older one carries on. The page also learns it straight away from the link request (409
-  `active-session`) and shows the same message.
+- **A second simultaneous call** from the same signed-in customer: `POST /api/support/start` answers 409
+  `{ error: "active-session", activeConversationId }` for the owner's own conversation only. The page offers
+  **Continue existing** (open that conversation or its history) or **End it and start new** (`{ replace: true, conversationId }`).
+  Replacement ends the old AI session (`POST /end-session`) then `replace_active_conversation` before authorizing one new start.
+  A non-owner never sees another customer's id (404/403). The older media session is stopped once.
 - **Too many sessions** in the window: the call ends politely (`rate-limited` on the page, 429 from the link request).
 - **Global breaker**: any new call beyond the cap hears that requests are busy and is ended.
 

@@ -28,6 +28,8 @@ export interface VoiceClient {
   /** Starts a call. Resolves with the backend conversation id once the call exists. */
   start(handlers: VoiceClientHandlers): Promise<{ conversationId: string }>;
   stop(): Promise<void>;
+  /** Requests a provider mute change and reports whether the provider verified it. */
+  setMuted(muted: boolean): Promise<boolean>;
   /** Types a message into the live call as if the customer had said it. */
   send(text: string): void;
 }

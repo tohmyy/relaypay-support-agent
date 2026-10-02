@@ -75,7 +75,7 @@ export interface SessionConfig {
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   maxSeconds: 360,
   warningSeconds: 30,
-  silenceSeconds: 15,
+  silenceSeconds: 10,
   countdownSeconds: 10,
   humanHandoff: false,
   requireLink: false,
@@ -89,6 +89,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 export const SESSION_TEXT = {
   anythingElse: "You're welcome. Is there anything else I can help you with?",
   goodbye: 'Thanks for contacting RelayPay Support. Goodbye.',
+  areYouStillThere: 'Are you still there?',
   warning: 'This support session will end in about 30 seconds.',
   timeout: 'This support session has reached its time limit, so I need to end it now. Goodbye.',
   ended: 'This support session has ended. You can start a new conversation whenever you need help.',

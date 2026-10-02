@@ -78,10 +78,14 @@ escalations carry the account's own name and email. The cookie is still never pa
 - Voice support is only reachable from `/support`, inside the customer shell. `/` never hosts a call: signed out goes to
   `/login`, a customer to `/dashboard`, staff to `/staff`.
 - Before a call, the page runs `GET /api/support/ready` (is support available) and `POST /api/support/start` (customer session,
-  same origin, concurrent-session and creation-rate limits). Both answer 401 without a customer session.
-- The call is then linked with `POST /api/support/link`. The link status is visible in the page
+  same origin, concurrent-session and creation-rate limits). Both answer 401 without a customer session. An already-open AI
+  conversation answers 409 `{ error: "active-session", activeConversationId }` for that owner's conversation only. The page
+  can **Continue existing** or send `{ replace: true, conversationId }` to end the old session and start one new one
+  (`replace_active_conversation`). Another customer's id is 404/403.
+- The call is then linked with `POST /api/support/link`. Both `customer_id` and `user_id` are written in one patch. A limiter
+  failure answers 503 `unavailable` (never silently skipped). The link status is visible in the page
   (`linking | linked | failed`): a temporary failure is retried once automatically, a refusal (another owner) is not, and a
-  failed link offers **Save this conversation to your account**.
+  failed link offers **Save this conversation to your account** and keeps the call blocked.
 - The voice agent enforces the rule on its side: when `AGENT_REQUIRE_LINK` is on (the default in production) a call that is
   still not linked to a customer after `LINK_GRACE_SECONDS` (default 10) is ended politely with end reason `error`, and no
   account lookup is answered for it.

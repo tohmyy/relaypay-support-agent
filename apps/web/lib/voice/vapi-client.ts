@@ -90,6 +90,18 @@ export function createVapiClient(opts: { publicKey: string; assistantId: string;
       await vapi?.stop();
     },
 
+    async setMuted(muted: boolean) {
+      const instance = vapi;
+      if (!instance) return false;
+      try {
+        instance.setMuted(muted);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return instance.isMuted() === muted;
+      } catch {
+        return false;
+      }
+    },
+
     send(text: string) {
       vapi?.send({ type: 'add-message', message: { role: 'user', content: text } });
     },

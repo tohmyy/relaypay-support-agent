@@ -13,6 +13,13 @@ describe('classifyCompletion', () => {
     'Nothing else for now, thank you',
     'goodbye',
     'thats it',
+    "that'll be all",
+    'that will be all',
+    "that'll be everything",
+    "that's all, have a great day",
+    "that'll be all, good bye",
+    'good bye',
+    'have a great day',
   ])('treats "%s" as a clear closer', (text) => {
     expect(classifyCompletion(text)).toBe('clear');
   });

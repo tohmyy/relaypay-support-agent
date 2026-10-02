@@ -124,10 +124,28 @@ describe('POST /api/support/link limits', () => {
     expect((await post()).status).toBe(200);
   });
 
-  it('does not fail the link because a limit check failed', async () => {
+  it('answers 503 unavailable when a limit check cannot be made, instead of passing silently (AC-47.2)', async () => {
     h.restSelect.mockRejectedValue(new Error('conversations query failed (500)'));
     h.restPatch.mockResolvedValue([{ conversation_id: 'vapi_new' }]);
-    expect((await post()).status).toBe(200);
+    const res = await post();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'unavailable' });
+  });
+
+  it('writes the customer and the account in one update, so an owner is complete or absent', async () => {
+    reads({});
+    await post();
+    expect(h.restPatch).toHaveBeenCalledWith('conversations', expect.stringContaining('customer_id=is.null'), {
+      customer_id: 'CUS-1001',
+      user_id: 'u-1',
+    });
+  });
+
+  it('reports active-session when the one-active-conversation guarantee rejects the update (race)', async () => {
+    h.restPatch.mockRejectedValue(new Error('conversations update failed (409)'));
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'active-session' });
   });
 
   it('still refuses a call that belongs to someone else', async () => {

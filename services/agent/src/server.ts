@@ -218,27 +218,31 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     };
     write(sseChunk(id, { role: 'assistant' }));
     // Stay audible on slow turns. The acknowledgement fits what the turn is doing, comes from a fixed library, is
-    // transport only and is never stored as the answer.
+    // transport only and is never stored as the answer. Closers and confirmation replies never get one: classification
+    // runs before the timer is created, and the timer re-checks eligibility at fire time.
     let closedEarly = false;
-    const ackTimer = setTimeout(() => {
-      // Nobody is listening any more: do not speak, advance the phrase rotation or record an acknowledgement.
-      if (closedEarly) return;
-      const category = chooseAckCategory(progress, userMessage);
-      // One instant for both: when the acknowledgement is the first thing written, it *is* the first write.
-      const at = timer.elapsed();
-      timer.set('ack_ms', at);
-      timer.set('ack_category', category);
-      speak(acks.pick(conversationId, category), at);
-    }, fillerAfter);
+    const admission = opts.session?.admit?.(userMessage) ?? 'proceed';
+    const ackTimer =
+      admission === 'proceed'
+        ? setTimeout(() => {
+            if (closedEarly) return;
+            if (opts.session?.ackEligible && !opts.session.ackEligible(conversationId)) return;
+            const category = chooseAckCategory(progress, userMessage);
+            const at = timer.elapsed();
+            timer.set('ack_ms', at);
+            timer.set('ack_category', category);
+            speak(acks.pick(conversationId, category), at);
+          }, fillerAfter)
+        : undefined;
     // The response closing before it finished means the connection dropped (for example the customer interrupted).
     res.on('close', () => {
       if (res.writableFinished) return;
       closedEarly = true;
-      clearTimeout(ackTimer);
+      if (ackTimer) clearTimeout(ackTimer);
       timer.set('client_closed_ms', timer.elapsed());
     });
     const answered = await answer(conversationId, userMessage, callId, timer, progress);
-    clearTimeout(ackTimer);
+    if (ackTimer) clearTimeout(ackTimer);
     timer.set('delivered', !closedEarly);
     if (closedEarly) opts.session?.replyNotDelivered(conversationId);
     speak(answered.text);
@@ -297,6 +301,46 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       return sendJson(res, 200, result);
     } catch (error) {
       logTechnical('resume failed', error, conversationId);
+      return sendJson(res, 500, { error: 'internal error' });
+    }
+  }
+
+  async function composerActivity(req: IncomingMessage, res: ServerResponse) {
+    let body: { conversationId?: unknown; type?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      return sendJson(res, 400, { error: 'invalid JSON' });
+    }
+    const conversationId = typeof body.conversationId === 'string' ? body.conversationId : '';
+    const type = body.type;
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(conversationId)) {
+      return sendJson(res, 400, { error: 'conversation id required' });
+    }
+    if (type !== 'start' && type !== 'heartbeat' && type !== 'stop') {
+      return sendJson(res, 400, { error: 'invalid activity type' });
+    }
+    if (!opts.session?.recordActivity(conversationId, type)) return sendJson(res, 409, { error: 'not active' });
+    return sendJson(res, 200, { ok: true });
+  }
+
+  async function endSession(req: IncomingMessage, res: ServerResponse) {
+    let body: { conversationId?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      return sendJson(res, 400, { error: 'invalid JSON' });
+    }
+    const conversationId = typeof body.conversationId === 'string' ? body.conversationId : '';
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(conversationId)) {
+      return sendJson(res, 400, { error: 'conversation id required' });
+    }
+    if (!opts.session) return sendJson(res, 404, { error: 'not found' });
+    try {
+      await opts.session.endSession(conversationId, 'user-ended');
+      return sendJson(res, 200, { ok: true });
+    } catch (error) {
+      logTechnical('end-session failed', error, conversationId);
       return sendJson(res, 500, { error: 'internal error' });
     }
   }
@@ -390,6 +434,24 @@ export function createAgentServer(opts: AgentServerOptions): Server {
         if (req.method !== 'POST')
           return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
         return await resumeConversation(req, res);
+      }
+
+      if (path === '/activity') {
+        if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
+          return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
+        }
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        return await composerActivity(req, res);
+      }
+
+      if (path === '/end-session') {
+        if (!sameSecret(bearer(req.headers.authorization), opts.apiToken)) {
+          return sendJson(res, 401, { error: 'unauthorized' }, { 'WWW-Authenticate': 'Bearer' });
+        }
+        if (req.method !== 'POST')
+          return sendJson(res, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        return await endSession(req, res);
       }
 
       if (path === '/chat/completions' || path === '/v1/chat/completions') {

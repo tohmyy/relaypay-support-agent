@@ -146,7 +146,7 @@ describe('POST /api/support/text-turn', () => {
     ]);
     const res = await post({ message: 'hi' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'active-session' });
+    expect(await res.json()).toEqual({ error: 'active-session', activeConversationId: 'vapi_other' });
     expect(h.restInsert).not.toHaveBeenCalled();
   });
 

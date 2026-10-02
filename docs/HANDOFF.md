@@ -133,14 +133,18 @@ request for a human conversation gets a fixed line (`SESSION_TEXT.humanActive`),
 | `POST …/typing`, `POST …/read` | the owner | typing signal; "I have read it" |
 | `POST …/end` | the owner | end the chat |
 | `GET/POST /api/staff/conversations/[id]/messages` | staff | read, and reply (replying to an unassigned conversation takes it) |
-| `POST …/claim`, `POST …/release`, `POST …/close` | staff | take it (one winner, the other gets 409 `taken`); return it to the queue (the assignee or an admin); close it (the assignee or an admin) |
+| `POST …/claim`, `POST …/release`, `POST …/close` | staff | `staff_claim_escalation` / `staff_release_escalation` / `staff_close_escalation` in one transaction (conversation, ticket, escalation, one event). A stale or double action answers 409 with `{ outcome, state }` instead of mutating. Close sets `support_mode=ended`, `end_reason=human-closed`, ticket/escalation `closed`, and leaves `final_status` as the historical outcome |
+| `GET /api/support/conversations/[id]/transcript` and staff twin | owner / staff | incremental durable turns (`?after=` cursor of `created_at` + `turn_uid`) |
+| `POST /api/support/conversations/[id]/activity` | owner, AI sessions | `{ type: start \| heartbeat \| stop }` forwarded to the agent `POST /activity` (3 s heartbeat, 5 s lease) |
 | `POST …/typing`, `POST …/read` | staff | typing signal; "I have read it" (recorded only for the assignee) |
 | `GET /api/staff/queue` | staff | the live queue as this person may see it |
 | `GET/POST /api/staff/presence` | staff | the switch, and the heartbeat |
 | `GET/PUT /api/staff/settings/contact-methods` | administrators only | read and save which methods are on (at least one must stay on; 10 changes a minute) |
 
-Messages are limited to 2,000 characters and rate limited through the shared limiter in production (`docs/ABUSE.md`). Every write is
-conditional on the conversation still being open, so nothing is stored in a conversation that was closed a moment earlier.
+Messages are limited to 2,000 characters and rate limited through the shared limiter in production (`docs/ABUSE.md`). Sends go
+through `add_human_message`: if `support_mode` is not `human` or `ended_at` is set, the insert fails and the route answers 409
+`closed`. Staff work from `/staff` (live queue), `/staff/conversations` (paginated archive) and `/staff/escalations` (ticket-keyed
+inbox). The accept card shows customer, topic, ticket, age and an AI or generated summary.
 
 ## Roles
 

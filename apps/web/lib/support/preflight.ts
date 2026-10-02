@@ -1,7 +1,7 @@
 import { failFor, PermanentError, withRetry } from '../retry';
 
 /** What the browser learns before it begins a call (docs/BUILD-PLAN-V3.md V3.1 and V3.7). */
-export type PreflightResult =
+export type PreflightStatus =
   | 'ok'
   /** Support is not reachable right now. */
   | 'unavailable'
@@ -9,6 +9,18 @@ export type PreflightResult =
   | 'unauthorized'
   | 'active-session'
   | 'rate-limited';
+
+export type PreflightResult =
+  | PreflightStatus
+  | { status: PreflightStatus; activeConversationId?: string };
+
+export function preflightStatus(result: PreflightResult): PreflightStatus {
+  return typeof result === 'string' ? result : result.status;
+}
+
+export function preflightActiveId(result: PreflightResult): string | undefined {
+  return typeof result === 'string' ? undefined : result.activeConversationId;
+}
 
 /**
  * 1. Is support available? (`GET /api/support/ready`, one automatic retry on a transient failure)
@@ -36,9 +48,16 @@ export async function runPreflight(): Promise<PreflightResult> {
         const res = await fetch('/api/support/start', { method: 'POST', cache: 'no-store' });
         if (res.ok) return 'ok';
         if (res.status === 401 || res.status === 403) throw new SignedOut();
-        const reason = ((await res.json().catch(() => ({}))) as { error?: string }).error;
-        if (res.status === 409 && reason === 'active-session') return 'active-session';
-        if (res.status === 429 && reason === 'rate-limited') return 'rate-limited';
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          activeConversationId?: unknown;
+        };
+        if (res.status === 409 && body.error === 'active-session') {
+          return typeof body.activeConversationId === 'string'
+            ? { status: 'active-session', activeConversationId: body.activeConversationId }
+            : 'active-session';
+        }
+        if (res.status === 429 && body.error === 'rate-limited') return 'rate-limited';
         return failFor(res.status);
       },
       { operation: 'start' },

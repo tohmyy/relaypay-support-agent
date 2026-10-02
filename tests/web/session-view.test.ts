@@ -6,9 +6,9 @@ import { MOCK_LIMITS, silenceDemoScript } from '@/lib/voice/mock-state';
 import { DEMO_SCRIPT } from '@/lib/voice/mock-client';
 
 describe('sessionLimitsFromEnv', () => {
-  it('defaults to 6 minutes, a 30s warning, 15s of quiet and a 10s countdown', () => {
+  it('defaults to 6 minutes, a 30s warning, 10s of quiet and a 10s countdown', () => {
     expect(sessionLimitsFromEnv({})).toEqual(DEFAULT_LIMITS);
-    expect(DEFAULT_LIMITS).toEqual({ sessionMaxSeconds: 360, warningSeconds: 30, silenceTimeoutSeconds: 15, countdownSeconds: 10 });
+    expect(DEFAULT_LIMITS).toEqual({ sessionMaxSeconds: 360, warningSeconds: 30, silenceTimeoutSeconds: 10, countdownSeconds: 10 });
   });
 
   it('reads the same variables as the agent service, ignoring blank or invalid values', () => {
@@ -42,12 +42,12 @@ describe('deriveSessionView', () => {
     expect(deriveSessionView(input({ limits: null }))).toEqual({ silenceCountdown: null, secondsLeft: null, sessionWarning: false });
   });
 
-  it('starts the countdown after 15s of quiet and counts 10 down to 1', () => {
-    expect(at(14.9).silenceCountdown).toBeNull();
-    expect(at(15).silenceCountdown).toBe(10);
-    expect(at(16).silenceCountdown).toBe(9);
-    expect(at(24).silenceCountdown).toBe(1);
-    expect(at(30).silenceCountdown).toBe(1); // never below 1; the call is about to end
+  it('starts the countdown after 10s of quiet and counts 10 down to 1', () => {
+    expect(at(9.9).silenceCountdown).toBeNull();
+    expect(at(10).silenceCountdown).toBe(10);
+    expect(at(11).silenceCountdown).toBe(9);
+    expect(at(19).silenceCountdown).toBe(1);
+    expect(at(25).silenceCountdown).toBe(1); // never below 1; the call is about to end
   });
 
   it('only counts while listening: speaking, thinking and the assistant talking all cancel it', () => {
@@ -59,7 +59,7 @@ describe('deriveSessionView', () => {
 
   it('is held while a callback time is being agreed in the conversation', () => {
     expect(at(20, { supportState: 'escalation-required' }).silenceCountdown).toBeNull();
-    expect(at(20, { supportState: 'escalated' }).silenceCountdown).toBe(5);
+    expect(at(20, { supportState: 'escalated' }).silenceCountdown).toBe(1);
   });
 
   it('warns for the last 30 seconds of the session only', () => {

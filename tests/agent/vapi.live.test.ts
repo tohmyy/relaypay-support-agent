@@ -28,7 +28,7 @@ describe.skipIf(!live)('Vapi endpoint end to end (live model)', () => {
   beforeAll(async () => {
     if (!live) return;
     const mcpToken = randomUUID();
-    mcp = createHttpServer({ store: createStore(db), authToken: mcpToken });
+    mcp = createHttpServer({ store: createStore(db), authToken: mcpToken, allowUnlinked: true });
     await new Promise<void>((resolve) => mcp.listen(0, '127.0.0.1', resolve));
     const deps = { mcpUrl: `http://127.0.0.1:${(mcp.address() as AddressInfo).port}/mcp`, mcpToken };
     agent = createAgentServer({

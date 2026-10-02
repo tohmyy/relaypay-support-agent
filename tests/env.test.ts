@@ -49,9 +49,9 @@ describe('env validation', () => {
 
   it('gives the agent session limits sensible defaults and lets them be tuned', () => {
     const d = parseAgent(full);
-    expect([d.SESSION_MAX_SECONDS, d.SESSION_WARNING_SECONDS, d.SILENCE_TIMEOUT_SECONDS, d.SILENCE_COUNTDOWN_SECONDS]).toEqual([360, 30, 15, 10]);
+    expect([d.SESSION_MAX_SECONDS, d.SESSION_WARNING_SECONDS, d.SILENCE_TIMEOUT_SECONDS, d.SILENCE_COUNTDOWN_SECONDS]).toEqual([360, 30, 10, 10]);
     const blank = parseAgent({ ...full, SILENCE_TIMEOUT_SECONDS: '' });
-    expect(blank.SILENCE_TIMEOUT_SECONDS).toBe(15);
+    expect(blank.SILENCE_TIMEOUT_SECONDS).toBe(10);
     const tuned = parseAgent({ ...full, SESSION_MAX_SECONDS: '60', SILENCE_TIMEOUT_SECONDS: '5' });
     expect([tuned.SESSION_MAX_SECONDS, tuned.SILENCE_TIMEOUT_SECONDS]).toEqual([60, 5]);
     expect(() => parseAgent({ ...full, SESSION_MAX_SECONDS: 'abc' })).toThrow('SESSION_MAX_SECONDS');

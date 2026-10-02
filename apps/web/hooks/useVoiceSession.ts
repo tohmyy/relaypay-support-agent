@@ -5,10 +5,16 @@ import { useSessionClock } from '@/hooks/useSessionClock';
 import type { PublicConversationState, PublicEndReason } from '@/lib/conversation-state';
 import type { SessionView } from '@/lib/session/derive';
 import { deriveSupportState, emptyBackendState, type SupportState } from '@/lib/support/derive';
-import { addTypedTurn, applyTranscript, type ConversationTurn } from '@/lib/transcript';
+import {
+  addTypedTurn,
+  applyTranscript,
+  reconcileDurable,
+  type ConversationTurn,
+  type DurableTranscriptTurn,
+} from '@/lib/transcript';
 import type { VoiceClient, VoiceClientFactory, VoiceClientHandlers } from '@/lib/voice/client';
 import { RESUMABLE_END_REASONS, RESUME_GRACE_MS } from '@/lib/session/limits';
-import type { PreflightResult } from '@/lib/support/preflight';
+import { preflightActiveId, preflightStatus, type PreflightResult } from '@/lib/support/preflight';
 import { createNoiseDetector } from '@/lib/voice/noise';
 import { checkMicrophone } from '@/lib/voice/microphone';
 import {
@@ -22,6 +28,10 @@ import {
 export interface VoiceSessionOptions {
   createClient: VoiceClientFactory;
   fetchState: (conversationId: string) => Promise<PublicConversationState | null>;
+  fetchTranscript?: (
+    conversationId: string,
+    cursor: string | null,
+  ) => Promise<{ turns: DurableTranscriptTurn[]; cursor: string | null } | null>;
   /** Overridable for tests; defaults to a real browser microphone check. */
   checkMic?: () => Promise<ErrorKind | null>;
   /**
@@ -62,12 +72,16 @@ export interface VoiceSession {
   conversationId: string | null;
   /** Set when the last start was refused because of a conversation limit; cleared by the next start. */
   blocked: StartBlocked | null;
+  /** The owner's already-active conversation when start was refused for that reason. */
+  activeConversationId: string | null;
   /** True while the live status updates are failing (the last good snapshot stays on screen). */
   statusUnavailable: boolean;
   /** The sign-in lapsed while starting; the page should send the customer to sign in again. */
   signedOut: boolean;
   /** The microphone is muted (only ever true when the provider reported it). */
   muted: boolean;
+  muteFailed: boolean;
+  toggleMute(): Promise<void>;
   /** It sounds noisy where the customer is (best effort; false when nothing was measured). */
   noisy: boolean;
   /** The call ended and can be resumed, with the transcript kept, for this many more seconds (0 when it cannot). */
@@ -85,22 +99,27 @@ export interface VoiceSession {
    * False (and nothing sent) when there is no live call, the call is ending, or the text is empty or too long.
    */
   sendText(text: string): Promise<boolean>;
+  /** Composer typing: holds the visible silence countdown without changing the hard session deadline. */
+  noteTyping(active: boolean): void;
 }
 
 /** Owns the voice state, transcript and backend snapshot for one support session. */
 export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
-  const { createClient, fetchState, checkMic = checkMicrophone, preflight, reopen, pollMs = 3000, clock } = options;
+  const { createClient, fetchState, fetchTranscript, checkMic = checkMicrophone, preflight, reopen, pollMs = 3000, clock } = options;
   const [voice, dispatch] = useReducer(voiceReducer, initialVoiceModel);
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [backend, setBackend] = useState<PublicConversationState>(emptyBackendState);
   const [level, setLevel] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<StartBlocked | null>(null);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [typingActive, setTypingActive] = useState(false);
   const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   // The customer pressed "End conversation" themselves (so it is never reported as silence or a time limit).
   const [customerEnded, setCustomerEnded] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [muteFailed, setMuteFailed] = useState(false);
   const [noisy, setNoisy] = useState(false);
   const [endedAt, setEndedAt] = useState<number | null>(null);
   const [declined, setDeclined] = useState(false);
@@ -111,6 +130,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
 
   const clientRef = useRef<VoiceClient | null>(null);
   const idRef = useRef<string | null>(null);
+  const transcriptCursor = useRef<string | null>(null);
   const stateRef = useRef(voice.state);
   useEffect(() => {
     stateRef.current = voice.state;
@@ -129,6 +149,16 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     setStatusUnavailable(next === null);
     if (next) setBackend(next);
   }, [fetchState]);
+
+  const refreshTranscript = useCallback(async () => {
+    const id = idRef.current;
+    if (!id || !fetchTranscript) return;
+    const gen = generation.current;
+    const page = await fetchTranscript(id, transcriptCursor.current);
+    if (!page || idRef.current !== id || generation.current !== gen) return;
+    transcriptCursor.current = page.cursor;
+    if (page.turns.length) setTurns((current) => reconcileDurable(current, page.turns));
+  }, [fetchTranscript]);
 
   /** Records that the call just ended: the moment the resume window starts counting from. */
   const markEnded = useCallback(() => {
@@ -153,9 +183,12 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
       setLevel(0);
       setCustomerEnded(false);
       setBlocked(null);
+      setActiveConversationId(null);
+      setTypingActive(false);
       setStatusUnavailable(false);
       setSignedOut(false);
       setMuted(false);
+      setMuteFailed(false);
       setNoisy(false);
       noise.current.reset();
       setEndedAt(null);
@@ -163,6 +196,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
       setResumeFailed(false);
       if (!resumeId) {
         setTurns([]);
+        transcriptCursor.current = null;
         idRef.current = null;
         setConversationId(null);
       }
@@ -171,17 +205,19 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
       // comes before the conversation is reopened, because an open conversation counts against the customer's limits.)
       if (preflight) {
         const result = await preflight();
-        if (result === 'unavailable') {
+        const status = preflightStatus(result);
+        if (status === 'unavailable') {
           dispatch({ type: 'ERROR', kind: 'unavailable' });
           return;
         }
-        if (result === 'unauthorized') {
+        if (status === 'unauthorized') {
           setSignedOut(true);
           dispatch({ type: 'ERROR', kind: 'unavailable' });
           return;
         }
-        if (result === 'active-session' || result === 'rate-limited') {
-          setBlocked(result);
+        if (status === 'active-session' || status === 'rate-limited') {
+          setBlocked(status);
+          setActiveConversationId(status === 'active-session' ? preflightActiveId(result) ?? null : null);
           if (resumeId) {
             setResumeFailed(true);
             dispatch({ type: 'RESUME_FAILED' });
@@ -226,7 +262,10 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
         },
         onError: (kind) => dispatch({ type: 'ERROR', kind }),
         // Only providers that can tell call these; with no signal nothing is ever shown.
-        onMuteChange: setMuted,
+        onMuteChange: (next) => {
+          setMuted(next);
+          setMuteFailed(false);
+        },
         onAmbientLevel: (ambient) => {
           if (stateRef.current === 'user-speaking') return;
           setNoisy(noise.current.sample(ambient, nowMs()));
@@ -239,11 +278,12 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
         const { conversationId: id } = await client.start(handlers);
         idRef.current = id;
         setConversationId(id);
+        void refreshTranscript();
       } catch {
         dispatch({ type: 'ERROR', kind: 'connection' });
       }
     },
-    [checkMic, createClient, markEnded, nowMs, preflight, refresh, reopen],
+    [checkMic, createClient, markEnded, nowMs, preflight, refresh, refreshTranscript, reopen],
   );
 
   const start = useCallback(() => launch(), [launch]);
@@ -279,6 +319,15 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     return true;
   }, []);
 
+  const toggleMute = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client || !isActive(stateRef.current)) return;
+    const desired = !muted;
+    const changed = await client.setMuted(desired);
+    setMuteFailed(!changed);
+    if (changed) setMuted(desired);
+  }, [muted]);
+
   // The server recorded the conversation as ended (a closer, a time limit, silence, a limit, noise) while this page still
   // thinks the call is up: the server's hang-up did not reach the browser, so end the call here. This is the page's half of
   // "the call always really stops" (no listening-but-over call is left running).
@@ -299,6 +348,14 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     return () => clearInterval(timer);
   }, [conversationId, voice.state, pollMs, refresh]);
 
+  useEffect(() => {
+    if (!conversationId || !fetchTranscript) return;
+    void refreshTranscript();
+    const interval = isActive(voice.state) ? pollMs : Math.max(pollMs, 8000);
+    const timer = setInterval(() => void refreshTranscript(), interval);
+    return () => clearInterval(timer);
+  }, [conversationId, fetchTranscript, pollMs, refreshTranscript, voice.state]);
+
   // Leave nothing running if the page is closed mid-call.
   useEffect(() => {
     return () => {
@@ -317,6 +374,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     backend,
     onExpired: () => void hangUp(),
     now: clock,
+    typingActive,
   });
 
   // The agent service records why it ended the call, which can land just after the call drops (and, for a
@@ -369,9 +427,12 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     endReason,
     conversationId,
     blocked,
+    activeConversationId,
     statusUnavailable,
     signedOut,
     muted,
+    muteFailed,
+    toggleMute,
     noisy,
     resumeSecondsLeft,
     resumeFailed,
@@ -380,5 +441,6 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     start,
     end,
     sendText,
+    noteTyping: setTypingActive,
   };
 }

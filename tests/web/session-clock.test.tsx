@@ -41,12 +41,12 @@ describe('session timing in the voice session', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it('counts down after 15s of quiet and cancels the moment the customer speaks', async () => {
+  it('counts down after 10s of quiet and cancels the moment the customer speaks', async () => {
     const s = setup();
     await listeningCall(s);
     expect(s.now().session.silenceCountdown).toBeNull();
 
-    await advance(15_000);
+    await advance(10_000);
     expect(s.now().session.silenceCountdown).toBe(10);
     await advance(3_000);
     expect(s.now().session.silenceCountdown).toBe(7);
@@ -54,7 +54,7 @@ describe('session timing in the voice session', () => {
     act(() => s.client.handlers!.onUserSpeech(true));
     expect(s.now().session.silenceCountdown).toBeNull();
     act(() => s.client.handlers!.onUserSpeech(false));
-    await advance(14_000);
+    await advance(9_000);
     expect(s.now().session.silenceCountdown).toBeNull();
   });
 
@@ -65,7 +65,7 @@ describe('session timing in the voice session', () => {
     await advance(60_000);
     expect(s.now().session.silenceCountdown).toBeNull();
     act(() => s.client.handlers!.onAssistantSpeech(false)); // quiet time restarts from here
-    await advance(14_000);
+    await advance(9_000);
     expect(s.now().session.silenceCountdown).toBeNull();
     await advance(1_000);
     expect(s.now().session.silenceCountdown).toBe(10);

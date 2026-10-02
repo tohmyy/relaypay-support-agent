@@ -1,16 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useVoiceSession } from '@/hooks/useVoiceSession';
+import { useTypingActivity } from '@/hooks/useTypingActivity';
 import { failFor, withRetry } from '@/lib/retry';
 import { runPreflight } from '@/lib/support/preflight';
-import { fetchConversationState } from '@/lib/support/state-client';
+import { fetchConversationState, fetchConversationTranscript } from '@/lib/support/state-client';
 import type { VoiceClientFactory } from '@/lib/voice/client';
 import { DEMO_SCRIPT, MockVoiceClient } from '@/lib/voice/mock-client';
 import { createMockStateFetcher, silenceDemoScript } from '@/lib/voice/mock-state';
 import { createVapiClient } from '@/lib/voice/vapi-client';
 import { COPY } from '@/lib/copy';
 import Header from './Header';
+import ActiveSessionPrompt from './ActiveSessionPrompt';
 import HumanSupport from './shell/HumanSupport';
 import ResumePrompt from './ResumePrompt';
 import SessionFeedback from './SessionFeedback';
@@ -105,11 +108,19 @@ export default function SupportPage({
   const preflight = config.mode === 'vapi' ? runPreflight : undefined;
   // Picking a call back up within 30 seconds of its end needs the server to reopen the conversation first.
   const reopen = config.mode === 'vapi' ? reopenConversation : undefined;
-  const session = useVoiceSession({ createClient, fetchState, preflight, reopen });
+  const fetchTranscript = config.mode === 'vapi' ? fetchConversationTranscript : undefined;
+  const session = useVoiceSession({ createClient, fetchState, fetchTranscript, preflight, reopen });
+  const typingActivity = useTypingActivity(config.mode === 'vapi' ? session.conversationId : null);
 
   useEffect(() => {
     if (session.signedOut) window.location.replace('/login');
   }, [session.signedOut]);
+
+  useEffect(() => {
+    if (!['listening', 'user-speaking', 'processing', 'assistant-speaking'].includes(session.voice.state)) {
+      typingActivity(false);
+    }
+  }, [session.voice.state, typingActivity]);
 
   const linkedId = useRef<string | null>(null);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
@@ -118,7 +129,10 @@ export default function SupportPage({
   const linkStatus: LinkStatus | null =
     linkState && linkState.id === session.conversationId ? linkState.status : null;
 
-  const link = useCallback((id: string) => {
+  // The customer asked to save the conversation and that failed too: the call is not going to be in their account.
+  const [linkGaveUp, setLinkGaveUp] = useState(false);
+
+  const link = useCallback((id: string, manual = false) => {
     setLinkState({ id, status: 'linking' });
     void linkConversation(id).then((outcome) => {
       if (outcome.status === 'blocked') {
@@ -126,6 +140,7 @@ export default function SupportPage({
         setLinkState({ id, status: 'linked' });
       } else {
         setLinkState({ id, status: outcome.status });
+        if (outcome.status === 'failed' && manual) setLinkGaveUp(true);
       }
     });
   }, []);
@@ -135,36 +150,77 @@ export default function SupportPage({
     if (!linkIdentity || config.mode !== 'vapi' || !id || linkedId.current === id) return;
     linkedId.current = id;
     setBlocked(null);
+    setLinkGaveUp(false);
     link(id);
   }, [linkIdentity, config.mode, session.conversationId, link]);
 
-  // Another active conversation (or too many started): the server ends this call too; this ends it on the page.
+  // Another active conversation (or too many started): the server ends this call too; this ends it on the page. So does
+  // a conversation that still cannot be saved to the account after the customer's own retry (the agent's link grace is
+  // the backstop). The "Save this conversation" action stays visible until it works.
   useEffect(() => {
-    if (blocked) void session.end();
+    if (blocked || linkGaveUp) void session.end();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocked]);
+  }, [blocked, linkGaveUp]);
 
   // Typing instead of talking: offered when the microphone cannot be used, and for any customer who prefers it.
   const [typedOnly, setTypedOnly] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [replaceFailed, setReplaceFailed] = useState(false);
 
+  const router = useRouter();
   const shownBlock = blocked ?? session.blocked;
+  const activeId = session.activeConversationId;
+
+  const continueExisting = () => {
+    if (activeId) router.push(`/support/${encodeURIComponent(activeId)}`);
+  };
+
+  const endAndStartNew = async () => {
+    if (!activeId || replacing) return;
+    setReplacing(true);
+    setReplaceFailed(false);
+    try {
+      const res = await fetch('/api/support/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replace: true, conversationId: activeId }),
+      });
+      if (!res.ok) {
+        setReplaceFailed(true);
+        return;
+      }
+      setBlocked(null);
+      await session.start();
+    } catch {
+      setReplaceFailed(true);
+    } finally {
+      setReplacing(false);
+    }
+  };
+
   const Container = embedded ? 'div' : 'main';
   return (
     <>
       {!embedded && <Header />}
       <Container className="flex-1">
-        {shownBlock && (
+        {shownBlock === 'active-session' ? (
+          <ActiveSessionPrompt
+            conversationId={activeId}
+            replacing={replacing}
+            failed={replaceFailed}
+            onContinue={continueExisting}
+            onReplace={() => void endAndStartNew()}
+          />
+        ) : shownBlock ? (
           <div className="mx-auto w-full max-w-xl px-4 pt-6">
             <p
               role="alert"
               className="rounded-md border border-line bg-surface px-4 py-3 text-sm text-ink shadow-card"
             >
-              {shownBlock === 'active-session'
-                ? COPY.session.activeElsewhere
-                : COPY.session.tooManyConversations}
+              {COPY.session.tooManyConversations}
             </p>
           </div>
-        )}
+        ) : null}
         {linkStatus === 'failed' && (
           <div className="mx-auto w-full max-w-xl px-4 pt-6">
             <div
@@ -174,7 +230,7 @@ export default function SupportPage({
               <span>{COPY.link.failed}</span>
               <button
                 type="button"
-                onClick={() => session.conversationId && link(session.conversationId)}
+                onClick={() => session.conversationId && link(session.conversationId, true)}
                 className="inline-flex min-h-11 items-center rounded-md border border-line px-4 py-2 font-medium text-ink hover:bg-surface-subtle"
               >
                 {COPY.link.saveAction}
@@ -213,8 +269,14 @@ export default function SupportPage({
             onStart={session.start}
             onEnd={session.end}
             onSendText={session.sendText}
+            onTypingChange={(active) => {
+              typingActivity(active);
+              session.noteTyping(active);
+            }}
             onTypeInstead={config.mode === 'vapi' ? () => setTypedOnly(true) : undefined}
             muted={session.muted}
+            muteFailed={session.muteFailed}
+            onToggleMute={session.toggleMute}
             noisy={session.noisy}
             endedExtra={
               <>

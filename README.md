@@ -11,7 +11,7 @@ custom MCP server and Supabase data. See `PRD.md` for the brief and `docs/` for 
 - `knowledge/` - approved knowledge base content
 - `supabase/` - migrations and seed data
 - `tests/` - agent, MCP, retrieval and evaluation tests
-- `docs/` - `TDD.md`, `UI-SPEC.md`, `BUILD-PLAN.md`
+- `docs/` - `ONE-PAGER.md` (short overview), `TDD.md`, `UI-SPEC.md`, `BUILD-PLAN.md`
 - `assets/` - course assets (KB, rules, seed CSVs, brand)
 
 ## Getting started

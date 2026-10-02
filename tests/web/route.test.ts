@@ -9,6 +9,7 @@ vi.mock('@/lib/auth/dal', () => ({
 }));
 
 import { GET } from '@/app/api/conversations/[id]/state/route';
+import { sessionLimitsFromEnv } from '@/lib/session/limits';
 
 const call = (id: string) => GET(new Request('http://localhost/x'), { params: Promise.resolve({ id }) });
 
@@ -60,7 +61,7 @@ describe('GET /api/conversations/[id]/state', () => {
       ended: true,
       endReason: 'silence-timeout',
       startedAt: '2026-10-01T12:00:00.000Z',
-      limits: { sessionMaxSeconds: 360, warningSeconds: 30, silenceTimeoutSeconds: 15, countdownSeconds: 10 },
+      limits: sessionLimitsFromEnv(),
     });
     expect(Number.isFinite(Date.parse(body.serverTime))).toBe(true);
     const conversationsQuery = restSelect.mock.calls.find(([t]) => t === 'conversations')![1] as string;

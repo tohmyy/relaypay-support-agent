@@ -24,7 +24,7 @@ describe.skipIf(!live)('support workflows A-H (live model)', () => {
 
   beforeAll(async () => {
     if (!live) return;
-    server = createHttpServer({ store: createStore(db), authToken: token });
+    server = createHttpServer({ store: createStore(db), authToken: token, allowUnlinked: true });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     deps = { mcpUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`, mcpToken: token };
   });

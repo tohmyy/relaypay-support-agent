@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
     getStaffProfiles: vi.fn(),
     getConversationFeedback: vi.fn(),
     getConversationCost: vi.fn(),
+    getConversationExtras: vi.fn(),
   },
 }));
 
@@ -30,6 +31,10 @@ vi.mock('next/navigation', () => ({
     throw new Error(`REDIRECT:${to}`);
   },
   usePathname: () => '/',
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
+}));
+vi.mock('@/components/shell/AcceptConversation', () => ({
+  default: () => <div>Accept conversation</div>,
 }));
 vi.mock('@/lib/auth/dal', () => ({
   requireCustomer: (...a: unknown[]) => h.requireCustomer(...a),
@@ -79,6 +84,7 @@ beforeEach(() => {
   h.data.getConversationEscalation.mockResolvedValue(null);
   h.data.getConversationFeedback.mockResolvedValue([]);
   h.data.getConversationCost.mockResolvedValue(0.0421);
+  h.data.getConversationExtras.mockResolvedValue({ channel: 'voice', summary: null });
   h.data.getStaffCustomer.mockResolvedValue({ customer_id: 'CUS-1001', company_name: 'LagosLedger', contact_name: 'Amara Okafor', contact_email: 'amara@lagosledger.example', plan: 'Growth' });
 });
 

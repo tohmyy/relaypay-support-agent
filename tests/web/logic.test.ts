@@ -104,16 +104,15 @@ describe('transcript', () => {
     expect(turns[0]).toMatchObject({ speaker: 'user', text: 'How much are fees?', final: true });
   });
 
-  it('starts a new turn after a final one or when the speaker changes', () => {
+  it('keeps same-role text in one turn until the other speaker talks', () => {
     let turns = applyTranscript([], ev('user', 'Hello.', true), 1);
     turns = applyTranscript(turns, ev('user', 'Another question', false), 2);
     turns = applyTranscript(turns, ev('assistant', 'Sure.', true), 3);
     expect(turns.map((t) => [t.speaker, t.final])).toEqual([
-      ['user', true],
       ['user', false],
       ['assistant', true],
     ]);
-    expect(new Set(turns.map((t) => t.id)).size).toBe(3);
+    expect(new Set(turns.map((t) => t.id)).size).toBe(2);
   });
 
   it('ignores empty text and closes an open turn before a typed one', () => {

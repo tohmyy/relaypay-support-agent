@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   restInsert: vi.fn(),
   restPatch: vi.fn(),
+  restRpc: vi.fn(),
   restSelect: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock('@/lib/auth/rate-limit', () => ({
 vi.mock('@/lib/supabase.server', () => ({
   restInsert: (...a: unknown[]) => h.restInsert(...a),
   restPatch: (...a: unknown[]) => h.restPatch(...a),
+  restRpc: (...a: unknown[]) => h.restRpc(...a),
   restSelect: (...a: unknown[]) => h.restSelect(...a),
 }));
 
@@ -102,6 +104,13 @@ beforeEach(() => {
   h.rateLimit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0, shared: true });
   h.restInsert.mockResolvedValue(undefined);
   h.restPatch.mockResolvedValue([{ conversation_id: 'vapi_abc' }]);
+  h.restRpc.mockImplementation(async (name: string) => {
+    if (name === 'add_human_message') return { outcome: 'ok' };
+    if (name === 'staff_claim_escalation') return { outcome: 'claimed', state: null };
+    if (name === 'staff_release_escalation') return { outcome: 'released', state: null };
+    if (name === 'customer_end_escalation') return { outcome: 'ended', state: null };
+    throw new Error(`unexpected RPC ${name}`);
+  });
   h.getHumanMessages.mockResolvedValue([]);
   h.getStaffProfiles.mockResolvedValue(new Map());
   h.isAnyStaffOnline.mockResolvedValue(false);
@@ -113,12 +122,15 @@ describe('message ids and receipts', () => {
     h.getCurrentUser.mockResolvedValue(user());
     h.getConversation.mockResolvedValue(row());
     expect((await post(customerPost as Handler, { body: 'Hi', clientId: UUID })).status).toBe(201);
-    expect(h.restInsert).toHaveBeenCalledWith(
-      'conversation_turns',
-      { conversation_id: 'vapi_abc', sender: 'customer', body: 'Hi', client_msg_id: UUID },
-      { onConflict: 'conversation_id,client_msg_id' },
-    );
-    // The same request again is accepted the same way (the database ignores the duplicate).
+    expect(h.restRpc).toHaveBeenCalledWith('add_human_message', {
+      p_conversation_id: 'vapi_abc',
+      p_sender: 'customer',
+      p_body: 'Hi',
+      p_staff_user_id: null,
+      p_client_msg_id: UUID,
+    });
+    // The same request again is accepted; the database reports it as a duplicate without storing it twice.
+    h.restRpc.mockResolvedValueOnce({ outcome: 'duplicate' });
     expect((await post(customerPost as Handler, { body: 'Hi', clientId: UUID })).status).toBe(201);
   });
 
@@ -128,20 +140,20 @@ describe('message ids and receipts', () => {
     expect((await post(customerPost as Handler, { body: 'Hi', clientId: 'abc' })).status).toBe(400);
     h.getCurrentUser.mockResolvedValue(sarah);
     expect((await post(staffPost as Handler, { body: 'Hi', clientId: "x'; drop table" })).status).toBe(400);
-    expect(h.restInsert).not.toHaveBeenCalled();
+    expect(h.restRpc).not.toHaveBeenCalled();
   });
 
-  it('stamps when each side last wrote, for the unread marks', async () => {
+  it('sends each side through the atomic message RPC used for unread marks', async () => {
     h.getCurrentUser.mockResolvedValue(user());
     h.getConversation.mockResolvedValue(row());
     await post(customerPost as Handler, { body: 'Hi' });
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ last_customer_message_at: expect.any(String), customer_typing_at: null });
+    expect(h.restRpc).toHaveBeenCalledWith('add_human_message', expect.objectContaining({ p_sender: 'customer', p_body: 'Hi' }));
 
-    h.restPatch.mockClear();
+    h.restRpc.mockClear();
     h.getCurrentUser.mockResolvedValue(sarah);
     h.getConversation.mockResolvedValue(row({ assigned_staff_id: 'u-9' }));
     await post(staffPost as Handler, { body: 'Hello' });
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ last_staff_message_at: expect.any(String), staff_typing_at: null });
+    expect(h.restRpc).toHaveBeenCalledWith('add_human_message', expect.objectContaining({ p_sender: 'staff', p_body: 'Hello' }));
   });
 
   it('tells the customer what staff have read, how long they have waited, and whether anyone is online', async () => {
@@ -230,14 +242,13 @@ describe('customer ends the chat', () => {
     h.getConversation.mockResolvedValue(row());
     const res = await post(endChat as Handler);
     expect(res.status).toBe(200);
-    expect(h.restPatch.mock.calls[0][1]).toBe('conversation_id=eq.vapi_abc&support_mode=eq.human&ended_at=is.null');
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ support_mode: 'ended', end_reason: 'user-ended' });
-    expect(h.restInsert.mock.calls[0][1]).toMatchObject({ sender: 'system' });
+    expect(h.restRpc).toHaveBeenCalledWith('customer_end_escalation', {
+      p_conversation_id: 'vapi_abc',
+      p_customer_id: 'CUS-1001',
+    });
 
-    h.restPatch.mockResolvedValue([]); // a second end finds nothing open
-    h.restInsert.mockClear();
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ended' } });
     expect((await post(endChat as Handler)).status).toBe(409);
-    expect(h.restInsert).not.toHaveBeenCalled();
   });
 
   it('refuses someone else\'s chat, a closed chat, and staff', async () => {
@@ -265,26 +276,29 @@ describe('staff return a conversation to the queue', () => {
     h.getConversation.mockResolvedValue(row({ assigned_staff_id: 'u-9' }));
     const res = await post(staffRelease as Handler);
     expect(res.status).toBe(200);
-    expect(h.restPatch.mock.calls[0][1]).toContain('assigned_staff_id=eq.u-9');
-    expect(h.restPatch.mock.calls[0][2]).toMatchObject({ assigned_staff_id: null });
-    expect(h.restInsert.mock.calls[0][1]).toMatchObject({ sender: 'system', body: expect.stringContaining('returned this conversation') });
+    expect(h.restRpc).toHaveBeenCalledWith('staff_release_escalation', {
+      p_conversation_id: 'vapi_abc',
+      p_staff_id: 'u-9',
+    });
 
-    h.restPatch.mockResolvedValue([]);
-    h.restInsert.mockClear();
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-assigned', state: { assigned_staff_id: null } });
     expect((await post(staffRelease as Handler)).status).toBe(409);
-    expect(h.restInsert).not.toHaveBeenCalled();
   });
 
   it('lets an admin, refuses another agent, and needs something to give back', async () => {
     h.getConversation.mockResolvedValue(row({ assigned_staff_id: 'u-9' }));
     h.getCurrentUser.mockResolvedValue(david);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'taken', state: { assigned_staff_id: 'u-9' } });
     expect((await post(staffRelease as Handler)).status).toBe(409);
     h.getCurrentUser.mockResolvedValue(admin);
+    h.restRpc.mockResolvedValueOnce({ outcome: 'released', state: null });
     expect((await post(staffRelease as Handler)).status).toBe(200);
     h.getConversation.mockResolvedValue(row({ assigned_staff_id: null }));
-    expect(await (await post(staffRelease as Handler)).json()).toEqual({ error: 'not-assigned' });
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-assigned', state: { assigned_staff_id: null } });
+    expect(await (await post(staffRelease as Handler)).json()).toMatchObject({ error: 'not-assigned' });
     h.getConversation.mockResolvedValue(row({ support_mode: 'ended', ended_at: 'x', assigned_staff_id: 'u-9' }));
-    expect(await (await post(staffRelease as Handler)).json()).toEqual({ error: 'not-open' });
+    h.restRpc.mockResolvedValueOnce({ outcome: 'not-open', state: { support_mode: 'ended' } });
+    expect(await (await post(staffRelease as Handler)).json()).toMatchObject({ error: 'not-open' });
     h.getCurrentUser.mockResolvedValue(user());
     expect((await post(staffRelease as Handler)).status).toBe(401);
   });

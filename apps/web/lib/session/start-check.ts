@@ -1,8 +1,13 @@
 import { abuseLimitsFromEnv, activeEarlierIds, type OpenSessionRow } from '@/lib/session/abuse';
 import { restSelect } from '@/lib/supabase.server';
 
+export type StartCheck =
+  | { ok: true }
+  | { ok: false; blocked: 'active-session'; activeConversationId: string }
+  | { ok: false; blocked: 'rate-limited' };
+
 /** Whether this customer may begin another conversation right now (the same limits the link route and the agent enforce). */
-export async function startBlocked(customerId: string): Promise<'active-session' | 'rate-limited' | null> {
+export async function startBlocked(customerId: string): Promise<StartCheck> {
   const limits = abuseLimitsFromEnv();
   if (limits.maxConcurrentSessions > 0) {
     const others =
@@ -12,7 +17,9 @@ export async function startBlocked(customerId: string): Promise<'active-session'
           `&support_mode=eq.ai&ended_at=is.null&limit=20`,
       )) ?? [];
     const open = activeEarlierIds(others, Date.now() + 1, { maxSeconds: limits.sessionMaxSeconds });
-    if (open.length >= limits.maxConcurrentSessions) return 'active-session';
+    if (open.length >= limits.maxConcurrentSessions) {
+      return { ok: false, blocked: 'active-session', activeConversationId: open[0] };
+    }
   }
   if (limits.sessionRateMax > 0) {
     const since = new Date(Date.now() - limits.sessionRateWindowSeconds * 1000).toISOString();
@@ -21,7 +28,7 @@ export async function startBlocked(customerId: string): Promise<'active-session'
         'conversations',
         `select=conversation_id&customer_id=eq.${encodeURIComponent(customerId)}&started_at=gte.${encodeURIComponent(since)}&limit=${limits.sessionRateMax + 1}`,
       )) ?? [];
-    if (started.length >= limits.sessionRateMax) return 'rate-limited';
+    if (started.length >= limits.sessionRateMax) return { ok: false, blocked: 'rate-limited' };
   }
-  return null;
+  return { ok: true };
 }

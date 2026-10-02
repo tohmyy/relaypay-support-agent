@@ -151,7 +151,7 @@ describe('human handoff', () => {
     await s.msg('status-update', { status: 'in-progress' });
     await s.turn();
     s.used({ escalationCreated: true, escalationChannel: 'text_chat', answerType: 'escalation' });
-    await vi.advanceTimersByTimeAsync(9_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(s.conv().support_mode).toBe('ai');
     await vi.advanceTimersByTimeAsync(1_500);
     expect(s.conv().support_mode).toBe('human');

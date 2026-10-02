@@ -49,8 +49,10 @@ export async function POST(request: Request) {
       if (row.ended_at || row.support_mode !== 'ai') return json({ error: 'not-open' }, 409);
     } else {
       const blocked = await startBlocked(user.customerId);
-      if (blocked === 'active-session') return json({ error: 'active-session' }, 409);
-      if (blocked === 'rate-limited') return json({ error: 'rate-limited' }, 429);
+      if (!blocked.ok && blocked.blocked === 'active-session') {
+        return json({ error: 'active-session', activeConversationId: blocked.activeConversationId }, 409);
+      }
+      if (!blocked.ok && blocked.blocked === 'rate-limited') return json({ error: 'rate-limited' }, 429);
       conversationId = `text_${randomBytes(16).toString('hex')}`;
       await restInsert('conversations', {
         conversation_id: conversationId,

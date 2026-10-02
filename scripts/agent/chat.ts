@@ -22,7 +22,7 @@ if (inProcess) {
     process.exit(1);
   }
   const token = randomUUID();
-  server = createHttpServer({ store: createStore(createSupabase(url, key)), authToken: token });
+  server = createHttpServer({ store: createStore(createSupabase(url, key)), authToken: token, allowUnlinked: true });
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   deps.mcpUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
   deps.mcpToken = token;

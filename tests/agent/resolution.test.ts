@@ -129,7 +129,7 @@ describe('resolution: the platform ends the call, nothing else changes status (A
     s.tables.conversation_turns.push({ conversation_id: ID, turn_number: 1 });
 
     const closer = await s.turn("That's all, thank you");
-    expect(closer).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+    expect(closer).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(0);
@@ -151,7 +151,7 @@ describe('resolution: the platform ends the call, nothing else changes status (A
     expect(s.control.endCall).not.toHaveBeenCalled();
 
     const confirm = await s.turn('no, thanks');
-    expect(confirm).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+    expect(confirm).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(0);

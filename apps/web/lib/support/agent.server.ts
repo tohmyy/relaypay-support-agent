@@ -14,12 +14,36 @@ export function agentBaseUrl(env: Record<string, string | undefined> = process.e
 export const READY_FETCH_TIMEOUT_MS = 4000;
 /** A typed turn runs the assistant, which can take a while. */
 export const TEXT_TURN_TIMEOUT_MS = 90_000;
+export const AGENT_CONTROL_TIMEOUT_MS = 5_000;
 
 function logRetry(event: RetryEvent) {
   if (event.outcome === 'ok' && event.attempt === 1) return;
   console.info(
     `[web] retry operation=${event.operation} attempt=${event.attempt} outcome=${event.outcome} class=${event.errorClass ?? '-'} ms=${event.durationMs}`,
   );
+}
+
+/** Sends a single authenticated control signal. These are leases/idempotent commands and are never auto-retried. */
+export async function sendAgentControl(
+  path: '/activity' | '/end-session',
+  body: Record<string, unknown>,
+  opts: { fetchImpl?: typeof fetch; env?: Record<string, string | undefined> } = {},
+): Promise<boolean> {
+  const env = opts.env ?? process.env;
+  const token = env.AGENT_API_TOKEN;
+  if (!token) return false;
+  try {
+    const res = await (opts.fetchImpl ?? fetch)(`${agentBaseUrl(env)}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(AGENT_CONTROL_TIMEOUT_MS),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** True when the agent reports that it, the tool server and the database are all answering. One automatic retry. */

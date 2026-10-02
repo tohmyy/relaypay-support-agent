@@ -1,5 +1,6 @@
 import { NEUTRAL_STATE, type PublicConversationState } from '../conversation-state';
 import { failFor, withRetry } from '../retry';
+import type { DurableTranscriptTurn } from '../transcript';
 
 /**
  * Reads the customer-safe call snapshot. Returns null on any failure so the UI keeps its last state. A transient
@@ -21,6 +22,29 @@ export async function fetchConversationState(conversationId: string): Promise<Pu
       },
       { operation: 'state-poll' },
     );
+  } catch {
+    return null;
+  }
+}
+
+export interface TranscriptPage {
+  turns: DurableTranscriptTurn[];
+  cursor: string | null;
+}
+
+export async function fetchConversationTranscript(
+  conversationId: string,
+  cursor: string | null,
+): Promise<TranscriptPage | null> {
+  try {
+    const query = cursor ? `?after=${encodeURIComponent(cursor)}` : '';
+    const res = await fetch(`/api/support/conversations/${encodeURIComponent(conversationId)}/transcript${query}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<TranscriptPage>;
+    if (!Array.isArray(data.turns)) return null;
+    return { turns: data.turns as DurableTranscriptTurn[], cursor: typeof data.cursor === 'string' ? data.cursor : null };
   } catch {
     return null;
   }

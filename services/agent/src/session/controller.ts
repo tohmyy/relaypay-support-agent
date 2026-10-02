@@ -25,7 +25,8 @@ import { type CallHandle, noopCallControl, type VapiCallControl } from './vapi-c
 /** Extra time on the server-side silence countdown so the customer's visible 1 is never cut short by latency. */
 const SILENCE_GRACE_MS = 1000;
 /** If the goodbye's speech-end event never arrives, still end the call. */
-const PENDING_END_FALLBACK_MS = 10_000;
+const PENDING_END_FALLBACK_MS = 4_000;
+export const TYPING_LEASE_MS = 5_000;
 /**
  * Customer speech shorter than this while the assistant was talking is more likely a cough, a keystroke or a stray
  * word than a real interruption. Only a rough indicator: it is measured between webhook arrivals.
@@ -41,7 +42,9 @@ export const MAX_GIBBERISH_STRIKES = 3;
 
 export type TurnDecision =
   | { kind: 'proceed' }
-  | { kind: 'reply'; text: string };
+  | { kind: 'reply'; text: string; endCallAfterSpoken?: boolean };
+
+export type AdmitDecision = 'proceed' | 'close' | 'confirm';
 
 export interface SessionControllerOptions {
   /** Which ways of reaching a person an administrator allows. If a live text chat is off, no one is moved to one. */
@@ -111,6 +114,10 @@ interface Session {
   warningTimer?: ReturnType<typeof setTimeout>;
   hardTimer?: ReturnType<typeof setTimeout>;
   pendingEndTimer?: ReturnType<typeof setTimeout>;
+  typingLeaseUntil?: number;
+  typingTimer?: ReturnType<typeof setTimeout>;
+  /** Provider hang-up is in flight; a second speech-end or fallback must not request it again. */
+  hangingUp?: boolean;
 }
 
 type HandoffReason = 'escalation' | 'limit-reached';
@@ -179,6 +186,78 @@ export class SessionController {
   /** Phase of a conversation's session, for tests and diagnostics. */
   phaseOf(conversationId: string): SessionControlPhase | undefined {
     return this.sessions.get(conversationId)?.phase;
+  }
+
+  /**
+   * Pure closer classification for turn admission. No session mutation, no model work: used so acknowledgements are
+   * never scheduled for a turn that will only say goodbye.
+   */
+  admit(text: string): AdmitDecision {
+    const completion = classifyCompletion(text);
+    if (completion === 'clear') return 'close';
+    if (completion === 'ambiguous') return 'confirm';
+    return 'proceed';
+  }
+
+  /** False when a holding phrase must not be spoken (closer, pending end, timeout, human, already ended). */
+  ackEligible(conversationId: string): boolean {
+    const s = this.sessions.get(conversationId);
+    if (!s) return true;
+    return !(
+      s.ended ||
+      s.pendingEnd ||
+      s.pendingHandoff ||
+      s.hangingUp ||
+      s.phase === 'ending' ||
+      s.phase === 'ended' ||
+      s.phase === 'human-support' ||
+      s.phase === 'awaiting-confirmation' ||
+      s.mode === 'human'
+    );
+  }
+
+  /**
+   * Ends an active AI conversation from the web app (replace-and-start-new). Idempotent: a missing or already-ended
+   * session still records the durable end when a row exists.
+   */
+  async endSession(conversationId: string, reason: ConversationEndReason = 'user-ended'): Promise<void> {
+    const s = this.sessions.get(conversationId);
+    if (s) {
+      await this.end(s, reason);
+      return;
+    }
+    try {
+      await endConversation(this.db, conversationId, reason);
+    } catch (error) {
+      logEvent('error', 'session end not persisted', {
+        conversation_id: conversationId,
+        end_reason: reason,
+        message: errorMessage(error),
+      });
+    }
+  }
+
+  /** A bounded composer lease holds silence only. It never changes the hard session deadline. */
+  recordActivity(conversationId: string, type: 'start' | 'heartbeat' | 'stop'): boolean {
+    const s = this.sessions.get(conversationId);
+    if (!s || s.ended || s.textOnly) return false;
+    if (s.typingTimer) clearTimeout(s.typingTimer);
+    s.typingTimer = undefined;
+    if (type === 'stop') {
+      s.typingLeaseUntil = undefined;
+      this.armSilence(s);
+      return true;
+    }
+    s.typingLeaseUntil = Date.now() + TYPING_LEASE_MS;
+    this.cancelSilence(s);
+    s.typingTimer = unref(
+      setTimeout(() => {
+        s.typingTimer = undefined;
+        s.typingLeaseUntil = undefined;
+        this.armSilence(s);
+      }, TYPING_LEASE_MS),
+    );
+    return true;
   }
 
   /**
@@ -292,7 +371,7 @@ export class SessionController {
         s.pendingEndTimer = unref(
           setTimeout(() => void this.end(s, 'user-ended'), PENDING_END_FALLBACK_MS),
         );
-        return this.reply(s, input.userMessage, SESSION_TEXT.goodbye);
+        return this.reply(s, input.userMessage, SESSION_TEXT.goodbye, { endCallAfterSpoken: true });
       }
       if (completion === 'ambiguous') {
         s.phase = 'awaiting-confirmation';
@@ -354,7 +433,12 @@ export class SessionController {
 
   // --- internals ---
 
-  private async reply(s: Session, userMessage: string, text: string): Promise<TurnDecision> {
+  private async reply(
+    s: Session,
+    userMessage: string,
+    text: string,
+    extra: { endCallAfterSpoken?: boolean } = {},
+  ): Promise<TurnDecision> {
     try {
       await ensureConversation(this.db, s.conversationId);
       const { nextTurnNumber } = await loadHistory(this.db, s.conversationId);
@@ -371,7 +455,7 @@ export class SessionController {
         message: errorMessage(error),
       });
     }
-    return { kind: 'reply', text };
+    return { kind: 'reply', text, endCallAfterSpoken: extra.endCallAfterSpoken };
   }
 
   private async ensure(conversationId: string, call: CallHandle, textOnly = false): Promise<Session> {
@@ -557,7 +641,8 @@ export class SessionController {
       s.pendingEnd ||
       s.pendingHandoff ||
       s.assistantSpeaking ||
-      s.userSpeaking
+      s.userSpeaking ||
+      (s.typingLeaseUntil !== undefined && s.typingLeaseUntil > Date.now())
     );
   }
 
@@ -591,6 +676,7 @@ export class SessionController {
     await this.logEvent(s, 'silence_warning', 'silence countdown started', {
       countdown_seconds: this.config.countdownSeconds,
     });
+    if (!s.textOnly) await this.control.say(s.call, SESSION_TEXT.areYouStillThere).catch(() => false);
   }
 
   /** Persist first (so the customer UI can read the reason when the call drops), then hang up. Idempotent. */
@@ -626,6 +712,8 @@ export class SessionController {
   private async hangUp(s: Session, line?: string) {
     // A typed conversation has no call to hang up.
     if (s.textOnly) return;
+    if (s.hangingUp) return;
+    s.hangingUp = true;
     let stopped = false;
     if (line) {
       try {
@@ -871,6 +959,7 @@ export class SessionController {
       'pendingEndTimer',
       'pendingHandoffTimer',
       'linkTimer',
+      'typingTimer',
     ] as const) {
       if (s[key]) clearTimeout(s[key]);
       s[key] = undefined;

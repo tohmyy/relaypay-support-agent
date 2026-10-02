@@ -174,7 +174,7 @@ describe('a goodbye the customer talks over', () => {
   it('does not hang up when the customer carries on with a new request', async () => {
     const s = setup();
     await liveCall(s);
-    expect(await s.turn("that's all")).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+    expect(await s.turn("that's all")).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
     expect(s.session.phaseOf(ID)).toBe('ending');
     await s.assistant('started'); // the goodbye begins...
     expect((await s.turn('Wait, one more thing, where is my payout?')).kind).toBe('proceed');
@@ -190,7 +190,7 @@ describe('a goodbye the customer talks over', () => {
     await liveCall(s);
     await s.turn("that's all");
     await s.assistant('started');
-    expect(await s.turn("No, that's all, goodbye")).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+    expect(await s.turn("No, that's all, goodbye")).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
     await s.assistant('started');
     await s.assistant('stopped');
     await vi.advanceTimersByTimeAsync(0);

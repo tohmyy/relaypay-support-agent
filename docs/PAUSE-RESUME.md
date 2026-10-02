@@ -2,8 +2,9 @@
 
 Build Plan V2, sections 30, 31, 71 to 74. The plan says to investigate before implementing anything, and not to assume
 an approach. This document is the investigation: what is already known from Vapi's documentation and the installed SDK,
-what is not, how to find out, and what any option would have to change. **No pause or resume is implemented.** There is
-no customer-facing mute or pause control.
+what is not, how to find out, and what any option would have to change. **Full mid-call pause is not implemented.** Production mute (`VoiceClient.setMuted` on the voice panel) stops the microphone
+only; it does not hold silence or the hard session deadline. The 30-second post-end resume grace is documented in
+`docs/VAPI.md`.
 
 Status: **first live run done (2026-10-02); some answers are in, some experiments must be repeated.** The experiments
 are run from the developer-only lab page (`/dev/voice-lab`, 404 in production unless `ENABLE_DEV_STATES=1`) against a real
@@ -117,7 +118,7 @@ real assistant (conversations are created, the model runs, calls are billed). Ke
    does not, run it without `--dry-run`, then dry-run again to confirm it stuck. Without it the agent service cannot see
    anyone speaking and ends every call about 26 seconds after it starts, whatever is said. (Done 2026-10-02: the dry run
    now lists `speech-update`.)
-2. The agent service ends a quiet call after `SILENCE_TIMEOUT_SECONDS` + `SILENCE_COUNTDOWN_SECONDS` (15 + 10 + 1 s). Any
+2. The agent service ends a quiet call after `SILENCE_TIMEOUT_SECONDS` + `SILENCE_COUNTDOWN_SECONDS` (10 + 10 + 1 s). Any
    experiment that waits longer than that (a long mute, a long absence) needs `SILENCE_TIMEOUT_SECONDS=120` on the agent
    service, restarted. Put it back afterwards. (That an absent customer is hung up after ~26 s is itself a finding: a pause
    of any length needs the server to know about it.)

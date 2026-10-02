@@ -514,10 +514,11 @@ Label:
 
 > RelayPay Support
 
-> **Amended by Build Plan V3 (concern 14, V3.11).** The live transcript now renders **one chat bubble per turn**: the customer's
-> on the right, RelayPay Support's on the left, each with its speaker label. It matches the saved-transcript view
-> (`TranscriptView`), so what the customer sees live is what they find in their history. Keep the bubbles calm (no avatars,
-> no tails, no animation); the transcript is still secondary to the voice interaction.
+> **Amended by Build Plan V3 (concern 14, V3.11) and V4 (concern 48, V4.19).** The live transcript renders **one chat bubble
+> per turn**: the customer's on the right, RelayPay Support's on the left, each with its speaker label. Provider partials
+> and finals in one reply stay one bubble; durable rows (`display_text`, `turn_uid`) replace the live bubble without
+> duplicating it. Identifiers stay exact on screen (`TXN-9001`). The composer and ratings sit in the same card below the
+> transcript. Keep the bubbles calm (no avatars, no tails, no animation).
 
 Each turn may contain:
 

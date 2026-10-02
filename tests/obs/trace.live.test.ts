@@ -24,7 +24,7 @@ describe.skipIf(!live || !dbOnly)('observability (live)', () => {
 
   beforeAll(async () => {
     if (!live) return;
-    mcp = createHttpServer({ store: createStore(db), authToken: token });
+    mcp = createHttpServer({ store: createStore(db), authToken: token, allowUnlinked: true });
     await new Promise<void>((resolve) => mcp.listen(0, '127.0.0.1', resolve));
     deps = { mcpUrl: `http://127.0.0.1:${(mcp.address() as AddressInfo).port}/mcp`, mcpToken: token };
   });

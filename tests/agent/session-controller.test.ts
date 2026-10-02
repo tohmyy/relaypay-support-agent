@@ -215,7 +215,7 @@ describe('SessionController', () => {
       const s = setup();
       await quietCall(s);
       const d = await turn(s, "No, that's all.");
-      expect(d).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+      expect(d).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
       expect(s.tables.conversation_turns).toHaveLength(1);
       expect(s.tables.conversation_turns[0]).toMatchObject({ user_transcript: "No, that's all.", answer_type: 'direct_answer' });
 
@@ -232,8 +232,18 @@ describe('SessionController', () => {
       const s = setup();
       await quietCall(s);
       await turn(s, "I'm done");
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(4_000);
       expect(s.conv()).toMatchObject({ end_reason: 'user-ended' });
+      expect(s.control.endCall).toHaveBeenCalledOnce();
+    });
+
+    it('converges a duplicate speech-end and the fallback on one hang-up', async () => {
+      const s = setup();
+      await quietCall(s);
+      await turn(s, "that's all");
+      await s.assistant('started');
+      await Promise.all([s.assistant('stopped'), s.assistant('stopped')]);
+      await vi.advanceTimersByTimeAsync(4_000);
       expect(s.control.endCall).toHaveBeenCalledOnce();
     });
 
@@ -244,7 +254,7 @@ describe('SessionController', () => {
       expect(s.session.phaseOf(ID)).toBe('awaiting-confirmation');
       expect(s.conv().end_reason ?? null).toBeNull();
 
-      expect(await turn(s, 'No, that is all')).toEqual({ kind: 'reply', text: SESSION_TEXT.goodbye });
+      expect(await turn(s, 'No, that is all')).toMatchObject({ kind: 'reply', text: SESSION_TEXT.goodbye, endCallAfterSpoken: true });
       await s.assistant('started');
       await s.assistant('stopped');
       await vi.advanceTimersByTimeAsync(0);

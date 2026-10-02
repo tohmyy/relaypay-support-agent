@@ -19,7 +19,7 @@ export const RESUMABLE_END_REASONS = ['user-ended', 'agent-ended', 'silence-time
 export const DEFAULT_LIMITS: SessionLimits = {
   sessionMaxSeconds: 360,
   warningSeconds: 30,
-  silenceTimeoutSeconds: 15,
+  silenceTimeoutSeconds: 10,
   countdownSeconds: 10,
 };
 

@@ -64,6 +64,12 @@ export class MockVoiceClient implements VoiceClient {
     this.handlers?.onCallEnd();
   }
 
+  async setMuted(muted: boolean) {
+    this.muted = muted;
+    this.handlers?.onMuteChange?.(muted);
+    return true;
+  }
+
   send(text: string) {
     this.sent.push(text);
   }

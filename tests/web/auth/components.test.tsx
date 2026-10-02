@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ pathname: '/dashboard', conversationId: null as string | null }));
 
-vi.mock('next/navigation', () => ({ usePathname: () => h.pathname }));
+vi.mock('next/navigation', () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useVoiceSession', () => ({
   useVoiceSession: () => ({
     voice: {},

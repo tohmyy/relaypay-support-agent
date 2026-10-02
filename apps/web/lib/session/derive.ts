@@ -31,6 +31,8 @@ export interface SessionViewInput {
   nowMs: number;
   /** serverNow - clientNow, ms, from the last snapshot. */
   clockOffsetMs: number;
+  /** The customer is typing: hold the silence countdown only, never the hard session deadline. */
+  typingActive?: boolean;
 }
 
 export function deriveSessionView(i: SessionViewInput): SessionView {
@@ -46,7 +48,12 @@ export function deriveSessionView(i: SessionViewInput): SessionView {
     secondsLeft !== null && secondsLeft > 0 && secondsLeft <= limits.warningSeconds;
 
   let silenceCountdown: number | null = null;
-  if (i.quietSinceMs !== null && i.voiceState === 'listening' && !HOLDS_SILENCE.includes(i.supportState)) {
+  if (
+    !i.typingActive &&
+    i.quietSinceMs !== null &&
+    i.voiceState === 'listening' &&
+    !HOLDS_SILENCE.includes(i.supportState)
+  ) {
     const quietMs = i.nowMs - i.quietSinceMs;
     const afterTimeoutMs = quietMs - limits.silenceTimeoutSeconds * 1000;
     if (afterTimeoutMs >= 0) {
