@@ -8,7 +8,7 @@ import { deriveSupportState, emptyBackendState, type SupportState } from '@/lib/
 import {
   addTypedTurn,
   applyTranscript,
-  reconcileDurable,
+  hydrateDurable,
   type ConversationTurn,
   type DurableTranscriptTurn,
 } from '@/lib/transcript';
@@ -157,7 +157,7 @@ export function useVoiceSession(options: VoiceSessionOptions): VoiceSession {
     const page = await fetchTranscript(id, transcriptCursor.current);
     if (!page || idRef.current !== id || generation.current !== gen) return;
     transcriptCursor.current = page.cursor;
-    if (page.turns.length) setTurns((current) => reconcileDurable(current, page.turns));
+    if (page.turns.length) setTurns((current) => hydrateDurable(current, page.turns));
   }, [fetchTranscript]);
 
   /** Records that the call just ended: the moment the resume window starts counting from. */

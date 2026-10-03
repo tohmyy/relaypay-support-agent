@@ -423,3 +423,40 @@ describe('ResumePrompt', () => {
     expect(container.textContent!.toLowerCase()).not.toMatch(/\b(mcp|rag|supabase|vapi|sdk|agent|claude)\b/);
   });
 });
+
+describe('saved rows during a live call', () => {
+  const saved = {
+    turns: [
+      { id: 'u1:user', role: 'user' as const, displayText: 'T x n dash 9', createdAt: '2026-10-02T12:00:01.000Z' },
+      { id: 'u1:assistant', role: 'assistant' as const, displayText: 'I only caught the start of that.', createdAt: '2026-10-02T12:00:02.000Z' },
+    ],
+    cursor: 'c1',
+  };
+
+  it('does not put the saved rows beside the live bubbles', async () => {
+    const client = new MockVoiceClient([], 'vapi_test-call');
+    // Nothing is saved when the call starts; the rows appear once the agent has run turns.
+    let rows = { turns: [] as typeof saved.turns, cursor: null as string | null };
+    const fetchTranscript = vi.fn(async () => rows);
+    const hook = renderHook(() =>
+      useVoiceSession({
+        createClient: () => client,
+        fetchState: async () => emptyBackendState,
+        fetchTranscript,
+        checkMic: async () => null,
+        pollMs: 20,
+      }),
+    );
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    act(() => client.handlers!.onCallStart());
+    act(() => client.handlers!.onTranscript({ role: 'user', text: 'T x n dash 9 double 0, 1.', final: true }));
+    rows = saved;
+    await waitFor(() => expect(fetchTranscript).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 80)); // a few more polls
+    });
+    expect(hook.result.current.turns.map((t) => t.text)).toEqual(['T x n dash 9 double 0, 1.']);
+  });
+});

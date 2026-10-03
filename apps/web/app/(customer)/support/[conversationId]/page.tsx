@@ -22,7 +22,7 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
   if (!CONVERSATION_ID_PATTERN.test(conversationId)) notFound();
   const conversation = await getConversation(conversationId);
   if (!conversation || !canAccessConversation(user, conversation)) notFound();
-  const [turns, ticket] = await Promise.all([getTranscript(conversationId), getConversationTicket(conversationId)]);
+  const [turns, ticket] = await Promise.all([getTranscript(conversationId, { hideSuperseded: true }), getConversationTicket(conversationId)]);
   const copy = SHELL_COPY.support;
   const staffNames = Object.fromEntries(
     [...(await getStaffProfiles(turns.map((t) => t.staff_user_id ?? '')).catch(() => new Map()))].map(([id, a]) => [id, a.name]),

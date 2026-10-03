@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addTypedTurn, applyTranscript, reconcileDurable, type ConversationTurn } from '@/lib/transcript';
+import { addTypedTurn, applyTranscript, hydrateDurable, reconcileDurable, type ConversationTurn } from '@/lib/transcript';
 
 const t = (over: Partial<ConversationTurn> & Pick<ConversationTurn, 'id' | 'speaker' | 'text'>): ConversationTurn => ({
   final: true,
@@ -127,5 +127,60 @@ describe('addTypedTurn', () => {
   it('marks the customer turn as typed so a reconnect can match client_msg_id / text', () => {
     const next = addTypedTurn([], 'Where is TXN-9001?', 10);
     expect(next[0]).toMatchObject({ speaker: 'user', text: 'Where is TXN-9001?', source: 'typed', final: true });
+  });
+});
+
+describe('live bubbles stay the transcript while a call is going', () => {
+  const durable = [
+    { id: 'u1:user', role: 'user' as const, displayText: 'T x n dash 9', createdAt: '2026-10-02T12:00:01.000Z' },
+    {
+      id: 'u1:assistant',
+      role: 'assistant' as const,
+      displayText: "Thanks, I only caught the start of that. Could you read me the rest of the numbers?",
+      createdAt: '2026-10-02T12:00:02.000Z',
+    },
+    { id: 'u2:user', role: 'user' as const, displayText: 'TXN-9001', createdAt: '2026-10-02T12:00:05.000Z' },
+    {
+      id: 'u2:assistant',
+      role: 'assistant' as const,
+      displayText: "Thanks, Amara. I've checked TXN-9001: it's an outgoing payout of 2,400 US dollars.",
+      createdAt: '2026-10-02T12:00:06.000Z',
+    },
+  ];
+
+  it('does not merge saved rows beside live bubbles, so nothing is doubled or split', () => {
+    let turns: ConversationTurn[] = [];
+    turns = applyTranscript(turns, { role: 'user', text: 'T x n dash 9', final: true }, 1000);
+    turns = hydrateDurable(turns, durable); // a poll lands between the two things the caller said
+    turns = applyTranscript(turns, { role: 'user', text: 'T x n dash 9 double 0, 1.', final: true }, 3000);
+    turns = applyTranscript(
+      turns,
+      { role: 'assistant', text: "Just a moment while I look into that. I've checked t x n minus 9001. It's an outgoing payout of 2 4 0 0 US dollars.", final: true },
+      4000,
+    );
+    turns = hydrateDurable(turns, durable);
+    expect(turns.map((t) => t.speaker)).toEqual(['user', 'assistant']);
+    expect(turns[0].displayText).toBe('T x n dash 9 double 0, 1.'); // one bubble for what was said once
+    expect(turns[1].displayText).toContain('TXN-9001'); // the reference shows exactly
+    expect(turns[1].displayText).toContain('Just a moment'); // and what was spoken stays
+  });
+
+  it('uses the saved rows when there is nothing live (a reload)', () => {
+    const turns = hydrateDurable([], durable);
+    expect(turns).toHaveLength(4);
+    expect(turns.every((t) => t.source === 'durable')).toBe(true);
+  });
+
+  it('keeps typed bubbles too', () => {
+    const typed = addTypedTurn([], 'Where is TXN-9001?', 5);
+    expect(hydrateDurable(typed, durable)).toBe(typed);
+  });
+
+  it('shows the assistant live text with its references restored, and leaves what the customer said alone', () => {
+    const a = applyTranscript([], { role: 'assistant', text: 'It is t x n minus 9001.', final: true }, 1);
+    expect(a[0].displayText).toBe('It is TXN-9001.');
+    expect(a[0].text).toBe('It is t x n minus 9001.');
+    const u = applyTranscript([], { role: 'user', text: 'T x n dash 9 double 0, 1.', final: true }, 1);
+    expect(u[0].displayText).toBe('T x n dash 9 double 0, 1.');
   });
 });

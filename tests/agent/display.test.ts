@@ -23,6 +23,10 @@ describe('canonicalizeIdentifiers', () => {
     ['TKT minus 0 0 0 0 0 7', 'TKT-000007'],
     ['TKT minus 000 007', 'TKT-000007'],
     ['ESC minus zero zero zero zero one two', 'ESC-000012'],
+    ['t x n minus 9001', 'TXN-9001'],
+    ['txn dash 9001', 'TXN-9001'],
+    ['t x n 9 0 0 1', 'TXN-9001'],
+    ['pay minus 7 0 0 2', 'PAY-7002'],
   ])('rewrites %j to %j', (spoken, display) => {
     expect(canonicalizeIdentifiers(spoken)).toBe(display);
   });
@@ -42,6 +46,8 @@ describe('canonicalizeIdentifiers', () => {
       'TXN-9001 is processing.',
       'Payout PAY-7002 is under review, and TKT-000007 tracks it.',
       'We pay 2400 dollars on the 9th.',
+      'You can pay 2400 now, or esc 000012 for later.',
+      'Please cus 1001 is not a reference.',
       'The transaction is complete.',
       'No reference numbers here.',
     ]) {

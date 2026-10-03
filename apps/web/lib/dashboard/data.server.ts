@@ -2,6 +2,7 @@ import 'server-only';
 import type { Role } from '@/lib/auth/token';
 import { onlineCutoff } from '@/lib/human/presence';
 import { restSelect } from '@/lib/supabase.server';
+import { dropSupersededTurns } from './superseded';
 import {
   ARCHIVE_PAGE_SIZE,
   buildArchiveRows,
@@ -169,16 +170,31 @@ export interface TranscriptTurn {
   created_at?: string | null;
 }
 
-export async function getTranscript(conversationId: string): Promise<TranscriptTurn[]> {
-  const rows = await restSelect<TranscriptTurn & { display_text?: string | null }>(
+/**
+ * `hideSuperseded` leaves out voice turns the caller abandoned (their reply was never played and a later turn holds their
+ * words), for what a customer reads. Staff keep the full record.
+ */
+export async function getTranscript(
+  conversationId: string,
+  options: { hideSuperseded?: boolean } = {},
+): Promise<TranscriptTurn[]> {
+  const rows = await restSelect<TranscriptTurn & { display_text?: string | null; timings?: { delivered?: unknown } | null }>(
     'conversation_turns',
-    `select=turn_uid,turn_number,user_transcript,assistant_response,display_text,spoken_text,sender,body,staff_user_id,created_at&conversation_id=${eq(conversationId)}&order=created_at.asc&limit=300`,
+    `select=turn_uid,turn_number,user_transcript,assistant_response,display_text,spoken_text,sender,body,staff_user_id,created_at,timings&conversation_id=${eq(conversationId)}&order=created_at.asc&limit=300`,
   );
+  // Only AI-era voice turns can be abandoned; messages from people and the system are never dropped.
+  const kept = options.hideSuperseded
+    ? (() => {
+        const voice = dropSupersededTurns(rows.filter((r) => !r.sender));
+        return rows.filter((r) => r.sender || voice.includes(r));
+      })()
+    : rows;
   // Canonical display text keeps reference numbers exact; rows from before it was stored fall back to the spoken text.
-  return rows.map(({ display_text, ...turn }) => ({
-    ...turn,
-    assistant_response: display_text?.trim() ? display_text : turn.assistant_response,
-  }));
+  return kept.map((row) => {
+    const { display_text, ...turn } = row;
+    delete (turn as { timings?: unknown }).timings; // read only to decide what to hide, never sent on
+    return { ...turn, assistant_response: display_text?.trim() ? display_text : turn.assistant_response };
+  });
 }
 
 export interface IncrementalTranscriptTurn {
@@ -208,19 +224,22 @@ export async function getTranscriptAfter(
   cursor?: string | null,
 ): Promise<{ turns: IncrementalTranscriptTurn[]; cursor: string | null }> {
   const after = decodeTranscriptCursor(cursor);
-  const rows = await restSelect<TranscriptTurn & { display_text?: string | null }>(
+  const rows = await restSelect<TranscriptTurn & { display_text?: string | null; timings?: { delivered?: unknown } | null }>(
     'conversation_turns',
-    `select=turn_uid,turn_number,user_transcript,assistant_response,display_text,spoken_text,sender,body,created_at` +
+    `select=turn_uid,turn_number,user_transcript,assistant_response,display_text,spoken_text,sender,body,created_at,timings` +
       `&conversation_id=${eq(conversationId)}&sender=is.null` +
       `${after ? `&created_at=gte.${encodeURIComponent(after.at)}` : ''}&order=created_at.asc,turn_uid.asc&limit=100`,
   );
-  const filtered = after
-    ? rows.filter((row) => {
-        const at = row.created_at ?? '';
-        const id = row.turn_uid ?? '';
-        return at > after.at || (at === after.at && id > after.id);
-      })
-    : rows;
+  // Turns the caller abandoned (their reply was never played) are not part of what is shown.
+  const filtered = dropSupersededTurns(
+    after
+      ? rows.filter((row) => {
+          const at = row.created_at ?? '';
+          const id = row.turn_uid ?? '';
+          return at > after.at || (at === after.at && id > after.id);
+        })
+      : rows,
+  );
   const turns: IncrementalTranscriptTurn[] = [];
   for (const row of filtered) {
     const uid = row.turn_uid;

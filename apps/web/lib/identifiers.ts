@@ -1,7 +1,7 @@
 /**
- * Canonical display text (Build Plan V4, V4.19). The spoken reply may be shaped for speech; what is stored for the
- * transcript keeps reference numbers exact: `TXN-9001`, never "TXN minus 9 00 1". The prompt asks the model to write
- * identifiers in their display form already; this is the deterministic backstop for the spoken forms that slip through.
+ * Canonical display text for reference numbers, web copy. Twin of services/agent/src/display.ts: keep them in step
+ * (tests/web/identifiers.test.ts runs both over the same table). The live transcript shows what the voice said ("t x n
+ * minus 9001"); this puts reference numbers back in the form RelayPay shows them ("TXN-9001").
  */
 
 /** Reference prefixes and how many digits follow them. A match is rewritten only when exactly that many digits are found. */

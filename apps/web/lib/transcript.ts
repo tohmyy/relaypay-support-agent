@@ -1,3 +1,4 @@
+import { canonicalizeIdentifiers } from './identifiers';
 import type { TranscriptEvent } from './voice/client';
 
 export interface ConversationTurn {
@@ -41,6 +42,14 @@ function joinSegments(committed: string, segment: string): string {
 }
 
 /**
+ * What the bubble shows. The voice's own wording of a reference ("t x n minus 9001") becomes the form RelayPay shows
+ * ("TXN-9001") for the assistant; the customer's bubble stays exactly what the recognizer heard.
+ */
+function shownText(role: ConversationTurn['speaker'], text: string): string {
+  return role === 'assistant' ? canonicalizeIdentifiers(text) : text;
+}
+
+/**
  * Folds a transcript event into the list of turns. A partial replaces the open partial of the current turn (the
  * recognizer revises earlier words, so partials are never appended); a final is committed and the next segment from the
  * same speaker continues the same bubble. Anything else starts a new turn.
@@ -63,14 +72,23 @@ export function applyTranscript(
     if (!event.final && !last.final && normalized(last.text).startsWith(normalized(joined))) joined = last.text;
     return [
       ...turns.slice(0, -1),
-      { ...last, text: joined, displayText: joined, committed: event.final ? joined : committed, final: event.final },
+      { ...last, text: joined, displayText: shownText(event.role, joined), committed: event.final ? joined : committed, final: event.final },
     ];
   }
   const numericIds = turns.map((turn) => (typeof turn.id === 'number' ? turn.id : 0));
   const id = Math.max(0, ...numericIds) + 1;
   return [
     ...turns,
-    { id, speaker: event.role, text, displayText: text, source: 'live', committed: event.final ? text : '', final: event.final, timestamp: now },
+    {
+      id,
+      speaker: event.role,
+      text,
+      displayText: shownText(event.role, text),
+      source: 'live',
+      committed: event.final ? text : '',
+      final: event.final,
+      timestamp: now,
+    },
   ];
 }
 
@@ -133,4 +151,15 @@ export function reconcileDurable(turns: ConversationTurn[], rows: DurableTranscr
     }
   }
   return next.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+/**
+ * Brings saved turns into the transcript only when there is nothing live to show (a page reload, a resume, the first
+ * poll). While live or typed bubbles exist they are the transcript: the saved rows hold the model's wording of every
+ * turn it ran, including replies the caller abandoned and never heard, and merging them in beside the live bubbles
+ * duplicates or splits them.
+ */
+export function hydrateDurable(turns: ConversationTurn[], rows: DurableTranscriptTurn[]): ConversationTurn[] {
+  if (turns.some((turn) => turn.source !== 'durable')) return turns;
+  return reconcileDurable(turns, rows);
 }
