@@ -61,14 +61,14 @@ afterEach(async () => {
 const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 /** Sends a chat request and drops the connection after `leaveAfterMs`, like a customer talking over the assistant. */
-function callAndLeave(port: number, leaveAfterMs: number, stream = true) {
+function callAndLeave(port: number, leaveAfterMs: number, stream = true, content = 'check TXN-9001') {
   return new Promise<void>((resolve) => {
     const req = request(
       { host: '127.0.0.1', port, path: '/chat/completions', method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } },
       (res) => res.on('data', () => {}).on('error', () => {}),
     );
     req.on('error', () => {});
-    req.write(JSON.stringify({ call: { id: 'call1' }, stream, messages: [{ role: 'user', content: 'check TXN-9001' }] }));
+    req.write(JSON.stringify({ call: { id: 'call1' }, stream, messages: [{ role: 'user', content }] }));
     req.end();
     setTimeout(() => {
       req.destroy();
@@ -200,5 +200,66 @@ describe('the customer talks over the assistant mid-turn', () => {
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     expect(res.status).toBe(200);
     spy.mockRestore();
+  });
+});
+
+describe('a caller who kept talking while an earlier turn was still running', () => {
+  it('skips the queued turn nobody is waiting for: no model call, nothing saved, the next one still answers', async () => {
+    const { db, updates } = recordingDb();
+    const { session, calls } = fakeSession();
+    const ran: string[] = [];
+    const port = await start({
+      db,
+      session,
+      fillerAfterMs: 5000,
+      runTurn: async (input) => {
+        ran.push(input.userMessage);
+        await new Promise((r) => setTimeout(r, input.userMessage === 'first' ? 200 : 5));
+        return { response: `reply to ${input.userMessage}`, turnNumber: ran.length };
+      },
+    });
+    const ask = (content: string) =>
+      fetch(`http://127.0.0.1:${port}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call: { id: 'call1' }, stream: true, messages: [{ role: 'user', content }] }),
+      }).then((r) => r.text());
+
+    const first = ask('first'); // in flight, slow
+    await settle(30);
+    await callAndLeave(port, 30, true, 'second'); // queued behind it, then the caller moves on
+    const third = ask('third'); // the newer request that carries what was said so far
+    const [firstText, thirdText] = await Promise.all([first, third]);
+    await settle(80);
+
+    expect(ran).toEqual(['first', 'third']); // 'second' never reached the model
+    expect(firstText).toContain('reply to first');
+    expect(thirdText).toContain('reply to third');
+    expect(calls.notDelivered).toContain('vapi_call1');
+    // Timings are only stored for turns that ran.
+    expect(updates.map((u) => u.filters.find(([c]) => c === 'turn_number')?.[1])).toEqual([1, 2]);
+  });
+
+  it('also skips an abandoned non-streaming request that is still queued', async () => {
+    const { session } = fakeSession();
+    const ran: string[] = [];
+    const port = await start({
+      session,
+      runTurn: async (input) => {
+        ran.push(input.userMessage);
+        await new Promise((r) => setTimeout(r, input.userMessage === 'first' ? 150 : 5));
+        return { response: 'ok', turnNumber: 1 };
+      },
+    });
+    const first = fetch(`http://127.0.0.1:${port}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ call: { id: 'call1' }, messages: [{ role: 'user', content: 'first' }] }),
+    }).then((r) => r.json());
+    await settle(30);
+    await callAndLeave(port, 30, false, 'second');
+    await first;
+    await settle(60);
+    expect(ran).toEqual(['first']);
   });
 });

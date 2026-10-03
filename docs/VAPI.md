@@ -151,13 +151,14 @@ Set in `.env.local`, then run `vapi:setup`. Only the variables you set are chang
 | `INTERRUPT_VOICE_SECONDS` | `stopSpeakingPlan.voiceSeconds` | 0 to 0.5 (0.2) | Voice activity needed before the assistant stops (used when `numWords` is 0). Lower is more responsive and more easily set off by noise |
 | `INTERRUPT_BACKOFF_SECONDS` | `stopSpeakingPlan.backoffSeconds` | 0 to 10 (1) | How long the assistant waits before speaking again after being interrupted |
 | `START_WAIT_SECONDS` | `startSpeakingPlan.waitSeconds` | 0 to 5 (0.4) | How long it waits after the customer stops before answering. Higher cuts in less often |
+| `SMART_ENDPOINTING` | `startSpeakingPlan.smartEndpointingPlan.provider` | `vapi` or `livekit` (unset) | Smart endpointing: after a sentence that sounds unfinished ("more info. I made...") Vapi waits longer before it decides the customer is done. Without it a thinking pause becomes its own request, and the assistant answers each fragment |
 | `SMART_DENOISING` | `backgroundSpeechDenoisingPlan.smartDenoisingPlan.enabled` | 0 or 1 | Krisp background-noise removal on Vapi's side (keyboard, traffic, a TV, other voices). The experimental Fourier denoiser is not touched |
 
 Vapi has **no speech-confidence threshold** for interruption; the nearest levers are `numWords`, `voiceSeconds` and the
 acknowledgement/interruption phrase lists. The browser SDK already turns on Krisp noise cancellation on the customer's
 microphone, and does not set echo cancellation (browser/Daily defaults apply; whether that matters is for the noise test).
 
-Reasonable things to *try* (not applied): `INTERRUPT_NUM_WORDS=2` so a stray "mm" or a cough does not cut the assistant
+If the assistant answers before the customer has finished (a reply to each fragment of a sentence they said with pauses), start with `START_WAIT_SECONDS=1` and `SMART_ENDPOINTING=vapi`, then raise the wait if it still cuts in. Reasonable things to *try* (not applied): `INTERRUPT_NUM_WORDS=2` so a stray "mm" or a cough does not cut the assistant
 off, `INTERRUPT_VOICE_SECONDS=0.3`, `SMART_DENOISING=1`. Change one thing at a time and compare.
 
 ### Noise test (plan section 33)
@@ -185,7 +186,10 @@ Whether Vapi closes the `/chat/completions` request when the customer barges in 
 - the reply cannot be delivered, so the turn's `timings` record `delivered: false` and `client_closed_ms` (visible in
   `npm run trace` as "reply not delivered"), the controller is told so silence detection starts again, and no
   acknowledgement is spoken, counted or rotated for someone who has gone;
-- the next request still waits behind the unfinished turn (serialisation is unchanged).
+- the next request still waits behind the unfinished turn (serialisation is unchanged), **but a turn that is still queued
+  (it has not started) when its caller has already gone is skipped**: no model call, no tool call, nothing saved, no
+  timings. Vapi's replacement request carries everything said so far, so nothing is lost; without this, a customer who
+  paused mid-sentence got an answer to each fragment. A turn that has already started is never cancelled.
 
 Also: a goodbye after "that's all" no longer hangs up when the customer carries on with a real request ("wait, one more
 thing"); a repeated closer still ends the call, and noise alone changes nothing. Each call writes one `voice_stats` event
@@ -198,8 +202,8 @@ looking at. Durations come from webhook arrival times, so short-interruption cou
 
 - The agent still "remembers" an answer the customer talked over: the full reply is saved and reloaded as history. Telling
   the agent that a reply was not heard changes what it sees, so it waits for live evidence from the report above.
-- Cancelling an abandoned turn (never one that is creating a ticket or escalation) so the next request is not stuck behind
-  it: same reason.
+- Cancelling an abandoned turn that is already running (never one that is creating a ticket or escalation) so the next
+  request is not stuck behind it. Only queued turns are skipped today.
 - Subscribing to Vapi's `user-interrupted` message (availability as a server message unconfirmed), and overriding echo
   cancellation on the Daily input (needs proof it does not switch off Krisp).
 

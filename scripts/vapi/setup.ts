@@ -13,7 +13,7 @@ import {
 // It never creates an assistant, changes only model/server/serverMessages and the session-limit backstops
 // (maxDurationSeconds, silenceTimeoutSeconds), plus firstMessage when asked, and, only for the variables you set,
 // how the assistant handles interruptions and background noise (INTERRUPT_NUM_WORDS, INTERRUPT_VOICE_SECONDS,
-// INTERRUPT_BACKOFF_SECONDS, START_WAIT_SECONDS, SMART_DENOISING; see docs/VAPI.md).
+// INTERRUPT_BACKOFF_SECONDS, START_WAIT_SECONDS, SMART_ENDPOINTING, SMART_DENOISING; see docs/VAPI.md).
 // With --dry-run it prints what it would send without changing anything.
 //
 //   npm run vapi:setup -- --url https://xyz.trycloudflare.com [--dry-run] [--first-message "..."]

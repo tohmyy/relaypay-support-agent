@@ -143,8 +143,15 @@ describe('the assistant prompt', () => {
 
   it('asks for reference numbers in their display form and never spelled out', () => {
     expect(prompt).toMatch(/Write every reference number exactly as RelayPay shows it/);
-    expect(prompt).toContain('TXN-9001');
-    expect(prompt).toMatch(/"TXN minus 9 00 1" is wrong/);
+    expect(prompt).toContain('TXN-####');
+    expect(prompt).toMatch(/Never spell out the punctuation or the digits/);
+  });
+
+  it('never gives a real, seeded reference as an example, and says how to ask for one', () => {
+    // Seeded records customers can really use: TXN-9001..9006, PAY-7001..7006, CUS-1001..1006, and the ticket examples.
+    expect(prompt).not.toMatch(/(?:TXN-90\d\d|PAY-70\d\d|CUS-10\d\d|TKT-0000\d\d|ESC-0000\d\d)/);
+    expect(prompt).toMatch(/describe its shape/);
+    expect(prompt).toMatch(/never give a specific example number/);
   });
 
   it('no longer tells the model to pass a customer, contact details or a ticket id to the tools', () => {

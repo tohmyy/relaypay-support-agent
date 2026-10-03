@@ -91,6 +91,8 @@ interface Answered {
   text: string;
   /** Stored turn number, when the agent ran (controller replies have none). */
   turnNumber?: number;
+  /** The caller had already gone when this turn's place in the queue came: nothing ran and nothing was stored. */
+  skipped?: boolean;
 }
 
 /**
@@ -122,12 +124,17 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     timer: TurnTimer,
     progress: TurnProgress,
     textOnly = false,
+    isAbandoned: () => boolean = () => false,
   ): Promise<Answered> {
     const session = opts.session;
     try {
       const r = await serialized(conversationId, async () => {
         // Time from the request arriving to this turn actually starting (it waits behind any earlier turn).
         timer.set('queue_ms', timer.elapsed());
+        // A caller who kept talking has already been given a newer request that carries everything said so far, so a
+        // turn nobody is waiting for, and that has not started, is dropped: no model call, no tool call, nothing saved.
+        // One that has started always finishes (it may be creating a ticket or an escalation).
+        if (isAbandoned()) return { response: '', skipped: true } as Pick<TurnResult, 'response'> & { skipped: true };
         // Deterministic session control first: time limit, "that's all", an ended call. No model call for these.
         const decision: TurnDecision = session
           ? await timer.span('controller_ms', () =>
@@ -145,7 +152,8 @@ export function createAgentServer(opts: AgentServerOptions): Server {
           throw error;
         }
       });
-      return { text: r.response, turnNumber: r.turnNumber };
+      if ((r as { skipped?: boolean }).skipped) return { text: '', skipped: true };
+      return { text: r.response, turnNumber: (r as Partial<TurnResult>).turnNumber };
     } catch (error) {
       logTechnical('runTurn failed', error, conversationId);
       return { text: SAFE_SPOKEN_ERROR };
@@ -195,7 +203,11 @@ export function createAgentServer(opts: AgentServerOptions): Server {
     if (speechGap !== undefined) timer.set('speech_to_agent_ms', speechGap);
     const id = `chatcmpl-${randomUUID()}`;
     if (body.stream !== true) {
-      const answered = await answer(conversationId, userMessage, callId, timer, progress);
+      let gone = false;
+      res.on('close', () => {
+        if (!res.writableFinished) gone = true;
+      });
+      const answered = await answer(conversationId, userMessage, callId, timer, progress, false, () => gone);
       // The customer may have talked over the assistant while the turn ran: there is nobody to answer.
       if (res.destroyed) {
         timer.set('client_closed_ms', timer.elapsed());
@@ -254,10 +266,14 @@ export function createAgentServer(opts: AgentServerOptions): Server {
       if (ackTimer) clearTimeout(ackTimer);
       timer.set('client_closed_ms', timer.elapsed());
     });
-    const answered = await answer(conversationId, userMessage, callId, timer, progress);
+    const answered = await answer(conversationId, userMessage, callId, timer, progress, false, () => closedEarly);
     if (ackTimer) clearTimeout(ackTimer);
     timer.set('delivered', !closedEarly);
     if (closedEarly) opts.session?.replyNotDelivered(conversationId);
+    if (answered.skipped) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
     speak(answered.text);
     write(sseChunk(id, {}, 'stop'));
     write(SSE_DONE);

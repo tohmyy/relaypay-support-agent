@@ -14,7 +14,7 @@ export const lookupCustomer: ToolDef<z.infer<typeof lookupCustomerSchema>> = {
     'Find a RelayPay customer account by customer_id, email or company_name (at least one). ' +
     'Returns account status and internal support notes. Never read support_notes aloud.',
   shape: {
-    customer_id: z.string().optional().describe('e.g. CUS-1001'),
+    customer_id: z.string().optional().describe('CUS- followed by digits'),
     email: z.string().optional(),
     company_name: z.string().optional(),
   },

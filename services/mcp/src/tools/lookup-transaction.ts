@@ -9,9 +9,9 @@ export const lookupTransaction: ToolDef<z.infer<typeof lookupTransactionSchema>>
   summarize: (r) =>
     r.found === true ? `found ${pick(r.transaction_id)}, status ${pick(r.status)}` : 'not found',
   description:
-    'Look up a transaction by transaction_id (required, e.g. TXN-9001). Returns status, amount, ' +
+    'Look up a transaction by transaction_id (required; TXN- followed by digits). Returns status, amount, ' +
     'currency, estimated arrival and a support summary. Translate the result into customer-friendly language.',
-  shape: { transaction_id: z.string().optional().describe('required, e.g. TXN-9001') },
+  shape: { transaction_id: z.string().optional().describe('required; TXN- followed by digits') },
   schema: lookupTransactionSchema,
   accountScoped: true,
   async run(input, store, ctx) {

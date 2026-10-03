@@ -22,6 +22,11 @@ const run = (name: string, input: unknown, ctx: Parameters<typeof executeTool>[3
   executeTool(tool(name), input, store, ctx);
 
 describe('registry', () => {
+  it('never shows the model a real, seeded reference as an example in a tool description', () => {
+    const text = tools.map((t) => `${t.description} ${JSON.stringify(Object.values(t.shape).map((z) => z.description))}`).join(' ');
+    expect(text).not.toMatch(/(?:TXN-90\d\d|PAY-70\d\d|CUS-10\d\d)/);
+  });
+
   it('exposes exactly the six required tools', () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       'create_escalation',

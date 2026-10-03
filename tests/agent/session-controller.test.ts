@@ -91,6 +91,8 @@ describe('SessionController', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(s.session.phaseOf(ID)).toBe('silence-warning');
       expect(s.events('silence_warning')).toHaveLength(1);
+      // The caller is asked "Are you still there?" first, and the call is not ended yet.
+      expect(s.control.say).toHaveBeenCalledWith(expect.anything(), 'Are you still there?');
       expect(s.control.endCall).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(11_000); // 10s countdown + 1s grace
@@ -99,6 +101,10 @@ describe('SessionController', () => {
       expect(s.conv().ended_at).toBeTruthy();
       expect(s.control.endCall).toHaveBeenCalledOnce();
       expect(s.events('session_ended')[0]).toMatchObject({ metadata: { end_reason: 'silence-timeout' } });
+      // ...and the question came before the hang-up.
+      expect(vi.mocked(s.control.say).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(s.control.endCall).mock.invocationCallOrder[0],
+      );
     });
 
     it('is cancelled by the customer speaking, at any point', async () => {

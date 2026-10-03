@@ -22,6 +22,13 @@ describe('interruptionFromEnv', () => {
     expect(interruptionFromEnv({ SMART_DENOISING: '0' })).toEqual({ smartDenoising: false });
   });
 
+  it('reads smart endpointing, and rejects anything but vapi or livekit', () => {
+    expect(interruptionFromEnv({ SMART_ENDPOINTING: 'vapi' })).toEqual({ smartEndpointing: 'vapi' });
+    expect(interruptionFromEnv({ SMART_ENDPOINTING: ' livekit ' })).toEqual({ smartEndpointing: 'livekit' });
+    expect(interruptionFromEnv({ SMART_ENDPOINTING: '' })).toEqual({});
+    expect(() => interruptionFromEnv({ SMART_ENDPOINTING: 'on' })).toThrow('SMART_ENDPOINTING');
+  });
+
   it('accepts the ends of every range', () => {
     expect(
       interruptionFromEnv({ INTERRUPT_NUM_WORDS: '0', INTERRUPT_VOICE_SECONDS: '0.5', INTERRUPT_BACKOFF_SECONDS: '10', START_WAIT_SECONDS: '5' }),
@@ -55,6 +62,25 @@ describe('interruptionFromEnv', () => {
       expect(message).not.toContain('secret-looking');
       expect(message).not.toContain('99');
     }
+  });
+});
+
+describe('interruptionPatch smart endpointing', () => {
+  it('sets the endpointing provider without losing the rest of the start plan', () => {
+    const current = { startSpeakingPlan: { waitSeconds: 0.4, smartEndpointingPlan: { provider: 'livekit', extra: 1 } } };
+    expect(interruptionPatch({ smartEndpointing: 'vapi' }, current)).toEqual({
+      startSpeakingPlan: { waitSeconds: 0.4, smartEndpointingPlan: { provider: 'vapi', extra: 1 } },
+    });
+  });
+
+  it('combines with the wait time in one start plan', () => {
+    expect(interruptionPatch({ waitSeconds: 1, smartEndpointing: 'vapi' })).toEqual({
+      startSpeakingPlan: { waitSeconds: 1, smartEndpointingPlan: { provider: 'vapi' } },
+    });
+  });
+
+  it('leaves the start plan alone when neither is set', () => {
+    expect(interruptionPatch({ numWords: 2 }, { startSpeakingPlan: { waitSeconds: 0.4 } })).not.toHaveProperty('startSpeakingPlan');
   });
 });
 

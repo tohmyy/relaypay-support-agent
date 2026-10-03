@@ -31,6 +31,7 @@ Missing or invalid variables are reported by name only, never by value.
 | `AGENT_PREWARM` | agent | no | `1` keeps an agent process started per live call. **Default off**; compare first (`docs/PERFORMANCE.md`) |
 | `PREWARM_MAX`, `PREWARM_TTL_SECONDS` | agent | no | Most warm processes at once (default 8) and how long an unused one lives (default 90) |
 | `INTERRUPT_NUM_WORDS`, `INTERRUPT_VOICE_SECONDS`, `INTERRUPT_BACKOFF_SECONDS`, `START_WAIT_SECONDS` | vapi:setup | no | Optional interruption tuning (0 to 10, 0 to 0.5, 0 to 10, 0 to 5). Blank leaves the assistant as configured. See `docs/VAPI.md` |
+| `SMART_ENDPOINTING` | vapi:setup | no | `vapi` or `livekit`: smart endpointing, so Vapi waits longer after an unfinished sentence before treating the customer as done. Blank leaves it as configured. Good start with `START_WAIT_SECONDS=1`: `SMART_ENDPOINTING=vapi` |
 | `SMART_DENOISING` | vapi:setup | no | `1` or `0`: Vapi's Krisp background-noise removal. Blank leaves it as configured |
 | `VAPI_API_KEY` (agent) | agent | yes | Optional; lets the agent service hang up a live call. Same key as above |
 | `ANTHROPIC_API_KEY` | web server, agent | yes | |

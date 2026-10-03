@@ -65,6 +65,11 @@ export interface InterruptionSettings {
   waitSeconds?: number;
   /** Krisp background-noise removal on Vapi's side. */
   smartDenoising?: boolean;
+  /**
+   * Smart endpointing: Vapi waits longer after a sentence that sounds unfinished ("more info. I made...") before it
+   * decides the customer is done, so a thinking pause does not become its own turn.
+   */
+  smartEndpointing?: 'vapi' | 'livekit';
 }
 
 /** The plans the assistant has today (from GET), so changing one field does not reset the others. */
@@ -99,6 +104,9 @@ export function interruptionFromEnv(env: Record<string, string | undefined>): In
   const denoise = (env.SMART_DENOISING ?? '').trim();
   if (denoise === '1' || denoise === '0') out.smartDenoising = denoise === '1';
   else if (denoise !== '') bad.push('SMART_DENOISING');
+  const endpointing = (env.SMART_ENDPOINTING ?? '').trim();
+  if (endpointing === 'vapi' || endpointing === 'livekit') out.smartEndpointing = endpointing;
+  else if (endpointing !== '') bad.push('SMART_ENDPOINTING');
   if (bad.length > 0) throw new Error(`Missing or invalid environment variables: ${bad.join(', ')}`);
   return out;
 }
@@ -114,8 +122,21 @@ export function interruptionPatch(settings: InterruptionSettings = {}, current: 
   }
   return {
     ...(Object.keys(stop).length > 0 ? { stopSpeakingPlan: { ...current.stopSpeakingPlan, ...stop } } : {}),
-    ...(settings.waitSeconds !== undefined
-      ? { startSpeakingPlan: { ...current.startSpeakingPlan, waitSeconds: settings.waitSeconds } }
+    ...(settings.waitSeconds !== undefined || settings.smartEndpointing !== undefined
+      ? {
+          startSpeakingPlan: {
+            ...current.startSpeakingPlan,
+            ...(settings.waitSeconds !== undefined ? { waitSeconds: settings.waitSeconds } : {}),
+            ...(settings.smartEndpointing !== undefined
+              ? {
+                  smartEndpointingPlan: {
+                    ...(current.startSpeakingPlan?.smartEndpointingPlan as Record<string, unknown> | undefined),
+                    provider: settings.smartEndpointing,
+                  },
+                }
+              : {}),
+          },
+        }
       : {}),
     ...(settings.smartDenoising !== undefined
       ? {

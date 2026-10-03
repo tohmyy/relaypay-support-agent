@@ -12,8 +12,8 @@ export const lookupPayout: ToolDef<z.infer<typeof lookupPayoutSchema>> = {
     'Look up a payout by payout_id or transaction_id (at least one). Returns status, schedule, ' +
     'failure reason and a support summary. A compliance review status means escalation rules apply.',
   shape: {
-    payout_id: z.string().optional().describe('e.g. PAY-7002'),
-    transaction_id: z.string().optional().describe('e.g. TXN-9003'),
+    payout_id: z.string().optional().describe('PAY- followed by digits'),
+    transaction_id: z.string().optional().describe('TXN- followed by digits'),
   },
   schema: lookupPayoutSchema,
   accountScoped: true,
